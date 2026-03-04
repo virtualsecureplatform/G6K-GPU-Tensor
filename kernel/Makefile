@@ -48,7 +48,7 @@ $(DEST): $(OBJ) $(KERNELHEADERS) ../Makefile.local
 
 # CUDA build rule
 %.o: %.cu $(KERNELHEADERS) ../Makefile.local
-	$(NVCC) $(NVCC_FLAGS) $(CUDA_FLAGS) -c $< -o $@
+	$(NVCC) -t 4 $(NVCC_FLAGS) $(CUDA_FLAGS) -c $< -o $@
 
 clean:
 	-rm $(OBJ) *.o *.so ../*.so
