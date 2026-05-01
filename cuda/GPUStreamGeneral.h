@@ -82,6 +82,8 @@ class GPUStreamGeneral {
         uint32_t send_b_id_end;
         size_t last_bucketsize;
         size_t last_lift_bucketsize;
+        size_t last_result_capacity;
+        size_t last_lift_result_capacity;
         size_t minimum_bucketsize;
         size_t n; 
         const int device;

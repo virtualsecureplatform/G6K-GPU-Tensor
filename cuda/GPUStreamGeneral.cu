@@ -1878,6 +1878,10 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             host_alloc = nullptr;
             dev_alloc = nullptr;
             global_alloc = nullptr;
+            last_bucketsize = 0;
+            last_lift_bucketsize = 0;
+            last_result_capacity = 0;
+            last_lift_result_capacity = 0;
             d2h_process_slot = 0;
             d2h_enqueue_slot = 1;
             for( int i = 0; i < 2; i++ ) {
@@ -2798,6 +2802,8 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
         // Compute blocks/threads
         const size_t blocks = last_bucketsize / 64;
         const size_t threads = 128;
+        last_result_capacity = std::min(last_bucketsize, size_t(VECNUM));
+        last_lift_result_capacity = 0;
 
 
         if( benchmark ) {
@@ -2870,6 +2876,7 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
             gridDim.x = last_lift_bucketsize/128; // assume integer
             gridDim.y = 1; // assume integer
+            last_lift_result_capacity = std::min(size_t(2) * last_lift_bucketsize, size_t(VECNUM));
 
             blockDim.x = 8;
             blockDim.y = 16; 
@@ -2918,15 +2925,16 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
 void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
             if( !onlyprocess ) {
-                const size_t results = VECNUM;
+                const size_t results = std::min(last_result_capacity, size_t(VECNUM));
                 const int enqueue_slot = d2h_enqueue_slot;
 
                 CUDA_CHECK( cudaMemcpyAsync(host_indices_slots[enqueue_slot], dev_indices, results * 2 * sizeof(indextype) , cudaMemcpyDeviceToHost, stream) );
                 CUDA_CHECK( cudaMemcpyAsync(host_len_out_slots[enqueue_slot], dev_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
 
-                if( lift ) {
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_indices_slots[enqueue_slot], dev_lift_indices, results * 2 * sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_len_out_slots[enqueue_slot], dev_lift_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
+                if( lift and last_lift_result_capacity > 0 ) {
+                    const size_t lift_results = std::min(last_lift_result_capacity, size_t(VECNUM));
+                    CUDA_CHECK( cudaMemcpyAsync(host_lift_indices_slots[enqueue_slot], dev_lift_indices, lift_results * 2 * sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
+                    CUDA_CHECK( cudaMemcpyAsync(host_lift_len_out_slots[enqueue_slot], dev_lift_len_out, lift_results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
                 }
 
                 CUDA_CHECK( cudaMemcpyAsync(host_nr_results_slots[enqueue_slot], dev_nr_results, 2*sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
