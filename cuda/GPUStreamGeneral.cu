@@ -1896,7 +1896,7 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             }
 
             // Cuda Stream
-            CUDA_CHECK( cudaStreamCreate( &stream ) );
+            CUDA_CHECK( cudaStreamCreateWithFlags( &stream, cudaStreamNonBlocking ) );
 
             cublasCreate(&handle);
             cublasSetStream(handle, stream); 
