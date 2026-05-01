@@ -1900,7 +1900,7 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
 
             cublasCreate(&handle);
             cublasSetStream(handle, stream); 
-            //cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH );
+            cublasSetMathMode(handle, CUBLAS_TF32_TENSOR_OP_MATH);
 
             // Malloc pinned memory
             size_t Xsize = size_t(VECDIM)*size_t(VECNUM);
