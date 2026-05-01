@@ -2855,9 +2855,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<32,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<32,true><<<1024, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<32,true><<<2048, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<32,false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<32,false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 64:  
                 if( triple )
@@ -2866,9 +2866,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<64,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<64,true><<<1024, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<64,true><<<2048, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<64,false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<64,false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 96:  
                 if( triple )
@@ -2877,9 +2877,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<96,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<96,true><<<1024, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<96,true><<<2048, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<96,false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<96,false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
              case 128:  
                 if( triple )
@@ -2888,9 +2888,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<128,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<128,true><<<1024, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<128,true><<<2048, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<128,false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<128,false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 160:  
                 if( triple )
@@ -2899,9 +2899,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<160,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<160,true><<<1024, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<160,true><<<2048, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<160,false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
+                    kernel_postprocess<160,false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             default:
                 assert(false);
@@ -2932,19 +2932,19 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
             switch( VECDIM ) {
                 case 32:
-                    kernel_postprocess<32, false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
+                    kernel_postprocess<32, false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 64:
-                    kernel_postprocess<64, false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
+                    kernel_postprocess<64, false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 96:
-                    kernel_postprocess<96, false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
+                    kernel_postprocess<96, false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 128:
-                    kernel_postprocess<128, false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
+                    kernel_postprocess<128, false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 160:
-                    kernel_postprocess<160, false><<<1024, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
+                    kernel_postprocess<160, false><<<2048, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 default:
                     assert(false);
