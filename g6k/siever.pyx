@@ -108,6 +108,7 @@ cdef class Siever(object):
 
         self._core.full_n = M.d
         self.initialized = False
+        self.update_gso(0, M.d)
 
     @property
     def params(self):
