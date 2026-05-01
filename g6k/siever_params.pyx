@@ -168,7 +168,7 @@ cdef class SieverParams(object):
             read_only = True
             del kwds["read_only"]
 
-        if "gpu_bucketer" == "bdgl":
+        if kwds["gpu_bucketer"] in ("bdgl", b"bdgl"):
             kwds["gpu_triple"] = False
 
         for k, v in kwds.items():
