@@ -332,18 +332,19 @@ void Siever::gpu_bucketing( const size_t A, size_t chunk_size, const std::vector
 
 // -------------------------------- PROCESSING ------------------------------------ //
 
-void Siever::gpu_processing_task( const size_t t_id, const size_t threads, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results ) {
+void Siever::gpu_processing_task( const size_t t_id, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results, std::atomic_size_t &next_bucket ) {
     const size_t nr_buckets = buckets.size();
-    const size_t streams = std::min( gpu_general[0].size(), nr_buckets/threads + (t_id < (nr_buckets%threads )));
+    const size_t streams = gpu_general[0].size();
 
     for( size_t i = 0; i < streams; i++ ) {
         gpu_general[t_id][i]->bind(db, cdb);
     }
 
-    // TODO: divide work dynamically using atomics?
-    size_t b = t_id;
     std::vector<bool> did_work(streams, false);
-    for( size_t s = 0 ;b < nr_buckets; b += threads, s++  ) {
+    for( size_t s = 0 ;; s++ ) {
+        size_t b = next_bucket.fetch_add(1, std::memory_order_relaxed);
+        if( b >= nr_buckets )
+            break;
         if( buckets[b].size < 128 )
             continue;
         did_work[s%streams] = true;
@@ -388,9 +389,10 @@ void Siever::gpu_processing_task( const size_t t_id, const size_t threads, const
 
 void Siever::gpu_processing( const size_t threads, const float lenbound, const std::vector<triple_bucket> &buckets, std::vector<queues> &t_queue, size_t max_results) 
 {
-    threadpool.run([this, lenbound, &buckets, &t_queue, max_results](int t_id, int threads)
+    std::atomic_size_t next_bucket(0);
+    threadpool.run([this, lenbound, &buckets, &t_queue, max_results, &next_bucket](int t_id, int threads)
         {
-            gpu_processing_task( t_id, threads, lenbound, buckets, t_queue[t_id], max_results / threads);
+            gpu_processing_task( t_id, lenbound, buckets, t_queue[t_id], max_results / threads, next_bucket);
         }, threads);
 }
 

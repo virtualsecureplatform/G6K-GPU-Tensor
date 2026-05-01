@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <set>
 #include <array>
+#include <atomic>
 #include <type_traits>
 #include <cstdint>
 #include <mutex>
@@ -1247,7 +1248,7 @@ private:
     void gpu_bucketing_process_task( const size_t A, const size_t t_id, const size_t threads, const size_t chunk_size, const size_t vecs_per_local_part, std::vector<triple_bucket> &t_buckets);
     void gpu_bucketing_gather_task( const size_t A, const size_t nr_buckets, const size_t b_start, const size_t local_i_start, const size_t local_i_end, const std::vector<indextype> &all_bucket_indices, const std::vector<iptype> &all_bucket_ips, std::vector<triple_bucket> &t_buckets );
     void gpu_bucketing( const size_t A, const size_t chunk_size, const std::vector<size_t>& b_idxs, const size_t threads, std::vector<triple_bucket> &buckets, std::vector<indextype> &all_bucket_indices, std::vector<iptype> &all_bucket_ips );
-    void gpu_processing_task( const size_t t_id, const size_t threads, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results );
+    void gpu_processing_task( const size_t t_id, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results, std::atomic_size_t &next_bucket );
     void gpu_processing( const size_t threads, const float lenbound, const std::vector<triple_bucket> &buckets, std::vector<queues> &t_queue, size_t max_results);
     template<size_t tuple_size> inline UidType compute_uid( const Qtuple<tuple_size> &q );
     template<size_t tuple_size> inline std::array<ZT,MAX_SIEVING_DIM> compute_x( const Qtuple<tuple_size> &q);
