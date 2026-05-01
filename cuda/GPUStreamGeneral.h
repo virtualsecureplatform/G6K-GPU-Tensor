@@ -22,6 +22,12 @@ struct QEntry {
     int8_t sign;
 };
 
+struct packed_sieve_result {
+    int i1;
+    int i2;
+    lentype len;
+};
+
 template<size_t tuple_size>
 struct Qtuple {
     uint32_t v[tuple_size];
@@ -129,12 +135,16 @@ class GPUStreamGeneral {
         lentype* host_len_in; // input
         lentype* host_len_out; // output
         lentype* host_lift_len_out;
+        packed_sieve_result* host_results;
+        packed_sieve_result* host_lift_results;
         iptype* host_ips; // input & output
         indextype* host_indices; // output
         indextype* host_lift_indices;
         indextype* host_nr_results; // output
         lentype* host_len_out_slots[2];
         lentype* host_lift_len_out_slots[2];
+        packed_sieve_result* host_results_slots[2];
+        packed_sieve_result* host_lift_results_slots[2];
         indextype* host_indices_slots[2];
         indextype* host_lift_indices_slots[2];
         indextype* host_nr_results_slots[2];
@@ -151,6 +161,8 @@ class GPUStreamGeneral {
         lentype* dev_len_in;
         lentype* dev_len_out;
         lentype* dev_lift_len_out;
+        packed_sieve_result* dev_results;
+        packed_sieve_result* dev_lift_results;
         half* dev_len_half;
         iptype* dev_ips;
         indextype* dev_indices;

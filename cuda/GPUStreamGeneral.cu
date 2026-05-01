@@ -38,6 +38,9 @@ using namespace nvcuda;
 
 #define VECNUM GPUVECNUM
 
+static_assert(sizeof(packed_sieve_result) == 2 * sizeof(int) + sizeof(lentype),
+              "packed_sieve_result must stay densely packed for D2H copies");
+
 // Fully coalesced memory loads and stores
 // Call with vecs/VECS_PER_BLOCK blocks with 32 threads each
 __global__ void kernel_float_to_8bit( const float* Y, dhtype* Yint8, const uint32_t DIM ) {
@@ -379,7 +382,7 @@ __global__ void kernel_prepare_len_and_ips( const lentype* len_in, iptype* ips, 
 
 template<int VECDIM, bool triple=true>
 __global__
-void kernel_postprocess( const float* A_yr, const float* B_yr, const float B_len, const indextype* dev_indices, const indextype* dev_nr_results, lentype* len_out) {
+void kernel_postprocess( const float* A_yr, const float* B_yr, const float B_len, const indextype* dev_indices, const indextype* dev_nr_results, packed_sieve_result* results_out) {
     constexpr int blocks = 128;
     constexpr int warps_per_block = 1;
     constexpr int elmts = VECDIM / WARP_SIZE;
@@ -392,7 +395,7 @@ void kernel_postprocess( const float* A_yr, const float* B_yr, const float B_len
     const int2* resptr = reinterpret_cast<const int2*>(dev_indices) + blockIdx.x * warps_per_block + wid;
     const int2* resptr_end = reinterpret_cast<const int2*>(dev_indices) + nr_results;
     
-    lentype* lenptr = len_out + blockIdx.x * warps_per_block + wid;
+    packed_sieve_result* outptr = results_out + blockIdx.x * warps_per_block + wid;
 
     // preload B_yr
     float B_len_reg = sqrtf(B_len);
@@ -406,7 +409,7 @@ void kernel_postprocess( const float* A_yr, const float* B_yr, const float B_len
         }
     }
 
-    for( ; resptr < resptr_end; resptr += blocks * warps_per_block, lenptr += blocks * warps_per_block ) {
+    for( ; resptr < resptr_end; resptr += blocks * warps_per_block, outptr += blocks * warps_per_block ) {
         int2 res = *resptr;
         float len = 0.;
         if( !triple or (res.x >= 0 and res.y >= 0) ) {
@@ -438,8 +441,11 @@ void kernel_postprocess( const float* A_yr, const float* B_yr, const float B_len
         for (int offset = 16; offset > 0; offset /= 2)
             len += __shfl_down_sync(0xffffffff, len, offset);
         
-        if( threadIdx.x%32==0 )
-            *lenptr = len;
+        if( threadIdx.x%32==0 ) {
+            outptr->i1 = res.x;
+            outptr->i2 = res.y;
+            outptr->len = len;
+        }
     }
 }
 
@@ -1878,6 +1884,10 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             host_alloc = nullptr;
             dev_alloc = nullptr;
             global_alloc = nullptr;
+            host_results = nullptr;
+            host_lift_results = nullptr;
+            dev_results = nullptr;
+            dev_lift_results = nullptr;
             last_bucketsize = 0;
             last_lift_bucketsize = 0;
             last_result_capacity = 0;
@@ -1887,6 +1897,8 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = nullptr;
                 host_lift_len_out_slots[i] = nullptr;
+                host_results_slots[i] = nullptr;
+                host_lift_results_slots[i] = nullptr;
                 host_indices_slots[i] = nullptr;
                 host_lift_indices_slots[i] = nullptr;
                 host_nr_results_slots[i] = nullptr;
@@ -1948,6 +1960,14 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
                 reserve_host(lensize * sizeof(lentype)),
                 reserve_host(lensize * sizeof(lentype))
             };
+            const size_t host_results_offsets[] = {
+                reserve_host(lensize * sizeof(packed_sieve_result)),
+                reserve_host(lensize * sizeof(packed_sieve_result))
+            };
+            const size_t host_lift_results_offsets[] = {
+                reserve_host(lensize * sizeof(packed_sieve_result)),
+                reserve_host(lensize * sizeof(packed_sieve_result))
+            };
             const size_t host_ips_offset = reserve_host(max_results * sizeof(iptype));
             const size_t host_indices_offsets[] = {
                 reserve_host(max_results * sizeof(indextype)),
@@ -1972,6 +1992,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_len_out_offsets[i]);
                 host_lift_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_lift_len_out_offsets[i]);
+                host_results_slots[i] = reinterpret_cast<packed_sieve_result*>(host_base + host_results_offsets[i]);
+                host_lift_results_slots[i] = reinterpret_cast<packed_sieve_result*>(host_base + host_lift_results_offsets[i]);
                 host_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_indices_offsets[i]);
                 host_lift_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_lift_indices_offsets[i]);
                 host_nr_results_slots[i] = reinterpret_cast<indextype*>(host_base + host_nr_results_offsets[i]);
@@ -1980,6 +2002,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
 
             host_len_out = host_len_out_slots[0];
             host_lift_len_out = host_lift_len_out_slots[0];
+            host_results = host_results_slots[0];
+            host_lift_results = host_lift_results_slots[0];
             host_indices = host_indices_slots[0];
             host_lift_indices = host_lift_indices_slots[0];
             host_nr_results = host_nr_results_slots[0];
@@ -2006,6 +2030,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             const size_t dev_len_in_offset = reserve_dev(lensize * sizeof(lentype));
             const size_t dev_len_out_offset = reserve_dev(lensize * sizeof(lentype));
             const size_t dev_lift_len_out_offset = reserve_dev(lensize * sizeof(lentype));
+            const size_t dev_results_offset = reserve_dev(lensize * sizeof(packed_sieve_result));
+            const size_t dev_lift_results_offset = reserve_dev(lensize * sizeof(packed_sieve_result));
             const size_t dev_len_half_offset = reserve_dev(lensize * sizeof(half));
             const size_t dev_ips_offset = reserve_dev(max_results * sizeof(iptype));
             const size_t dev_indices_offset = reserve_dev(max_results * sizeof(indextype));
@@ -2025,6 +2051,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             dev_len_in = reinterpret_cast<lentype*>(dev_base + dev_len_in_offset);
             dev_len_out = reinterpret_cast<lentype*>(dev_base + dev_len_out_offset);
             dev_lift_len_out = reinterpret_cast<lentype*>(dev_base + dev_lift_len_out_offset);
+            dev_results = reinterpret_cast<packed_sieve_result*>(dev_base + dev_results_offset);
+            dev_lift_results = reinterpret_cast<packed_sieve_result*>(dev_base + dev_lift_results_offset);
             dev_len_half = reinterpret_cast<half*>(dev_base + dev_len_half_offset);
             dev_ips = reinterpret_cast<iptype*>(dev_base + dev_ips_offset);
             dev_indices = reinterpret_cast<indextype*>(dev_base + dev_indices_offset);
@@ -2097,6 +2125,8 @@ void GPUStreamGeneral::free() {
             host_len_in = nullptr;
             host_len_out = nullptr;
             host_lift_len_out = nullptr;
+            host_results = nullptr;
+            host_lift_results = nullptr;
             host_ips = nullptr;
             host_indices = nullptr;
             host_lift_indices = nullptr;
@@ -2104,6 +2134,8 @@ void GPUStreamGeneral::free() {
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = nullptr;
                 host_lift_len_out_slots[i] = nullptr;
+                host_results_slots[i] = nullptr;
+                host_lift_results_slots[i] = nullptr;
                 host_indices_slots[i] = nullptr;
                 host_lift_indices_slots[i] = nullptr;
                 host_nr_results_slots[i] = nullptr;
@@ -2122,6 +2154,8 @@ void GPUStreamGeneral::free() {
             dev_len_in = nullptr;
             dev_len_out = nullptr;
             dev_lift_len_out = nullptr;
+            dev_results = nullptr;
+            dev_lift_results = nullptr;
             dev_len_half = nullptr;
             dev_ips = nullptr;
             dev_indices = nullptr;
@@ -2158,6 +2192,8 @@ void GPUStreamGeneral::reset_results() {
     if( host_alloc != nullptr ) {
         host_len_out = host_len_out_slots[0];
         host_lift_len_out = host_lift_len_out_slots[0];
+        host_results = host_results_slots[0];
+        host_lift_results = host_lift_results_slots[0];
         host_indices = host_indices_slots[0];
         host_lift_indices = host_lift_indices_slots[0];
         host_nr_results = host_nr_results_slots[0];
@@ -2819,9 +2855,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<32,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<32,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<32,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<32,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<32,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 64:  
                 if( triple )
@@ -2830,9 +2866,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<64,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<64,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<64,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<64,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<64,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 96:  
                 if( triple )
@@ -2841,9 +2877,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<96,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<96,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<96,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<96,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<96,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
              case 128:  
                 if( triple )
@@ -2852,9 +2888,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<128,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<128,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<128,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<128,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<128,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             case 160:  
                 if( triple )
@@ -2863,9 +2899,9 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
                     kernel_triple_sieve<160,false><<<blocks, threads, 0, stream>>>( dev_YR_half, dev_len_half, dev_ips, last_bucketsize, dev_nr_results, (int*)dev_indices );
                 if( benchmark ) CUDA_CHECK( cudaEventRecord(stop[bench_alternation], stream));
                 if( triple )
-                    kernel_postprocess<160,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<160,true><<<128, 32, 0, stream>>>( dev_YR_float, dev_B_float + VECDIM * B_id, B_len, dev_indices, dev_nr_results, dev_results);
                 else
-                    kernel_postprocess<160,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_len_out);
+                    kernel_postprocess<160,false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, B_len, dev_indices, dev_nr_results, dev_results);
                 break;
             default:
                 assert(false);
@@ -2896,19 +2932,19 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
             switch( VECDIM ) {
                 case 32:
-                    kernel_postprocess<32, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_len_out);
+                    kernel_postprocess<32, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 64:
-                    kernel_postprocess<64, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_len_out);
+                    kernel_postprocess<64, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 96:
-                    kernel_postprocess<96, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_len_out);
+                    kernel_postprocess<96, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 128:
-                    kernel_postprocess<128, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_len_out);
+                    kernel_postprocess<128, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 case 160:
-                    kernel_postprocess<160, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_len_out);
+                    kernel_postprocess<160, false><<<128, 32, 0, stream>>>( dev_YR_float, nullptr, 0., dev_lift_indices, &(dev_nr_results[1]), dev_lift_results);
                     break;
                 default:
                     assert(false);
@@ -2928,13 +2964,11 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
                 const size_t results = std::min(last_result_capacity, size_t(VECNUM));
                 const int enqueue_slot = d2h_enqueue_slot;
 
-                CUDA_CHECK( cudaMemcpyAsync(host_indices_slots[enqueue_slot], dev_indices, results * 2 * sizeof(indextype) , cudaMemcpyDeviceToHost, stream) );
-                CUDA_CHECK( cudaMemcpyAsync(host_len_out_slots[enqueue_slot], dev_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
+                CUDA_CHECK( cudaMemcpyAsync(host_results_slots[enqueue_slot], dev_results, results * sizeof(packed_sieve_result), cudaMemcpyDeviceToHost, stream) );
 
                 if( lift and last_lift_result_capacity > 0 ) {
                     const size_t lift_results = std::min(last_lift_result_capacity, size_t(VECNUM));
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_indices_slots[enqueue_slot], dev_lift_indices, lift_results * 2 * sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_len_out_slots[enqueue_slot], dev_lift_len_out, lift_results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
+                    CUDA_CHECK( cudaMemcpyAsync(host_lift_results_slots[enqueue_slot], dev_lift_results, lift_results * sizeof(packed_sieve_result), cudaMemcpyDeviceToHost, stream) );
                 }
 
                 CUDA_CHECK( cudaMemcpyAsync(host_nr_results_slots[enqueue_slot], dev_nr_results, 2*sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
@@ -2944,8 +2978,10 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
             const int process_slot = d2h_process_slot;
             host_indices = host_indices_slots[process_slot];
             host_len_out = host_len_out_slots[process_slot];
+            host_results = host_results_slots[process_slot];
             host_lift_indices = host_lift_indices_slots[process_slot];
             host_lift_len_out = host_lift_len_out_slots[process_slot];
+            host_lift_results = host_lift_results_slots[process_slot];
             host_nr_results = host_nr_results_slots[process_slot];
 
             // wait for data to arrive
@@ -2968,14 +3004,15 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
                 const indextype b_index = onlyprocess ? curr_bucket->b_db_index : prev_bucket->b_db_index;
                 const auto b_size = onlyprocess ? curr_bucket->size : prev_bucket->size;
 
-                if( host_nr_results[0] > max_results ) {
+                const uint32_t result_limit = uint32_t(std::min(last_result_capacity, size_t(max_results)));
+                if( host_nr_results[0] > result_limit ) {
                     std::cerr << "Result overflow " << host_nr_results[0] << std::endl;
-                    host_nr_results[0] = max_results;
+                    host_nr_results[0] = result_limit;
                 }
 
                 for( size_t i = 0; i < host_nr_results[0]; i++ ) {
-                    int i1 = ((int*)host_indices)[2*i];
-                    int i2 = ((int*)host_indices)[2*i+1];
+                    int i1 = host_results[i].i1;
+                    int i2 = host_results[i].i2;
 
                     uint8_t sign1 = __half2float(bucket_ips[std::abs(i1)]) > 0.f;
                     uint8_t sign2 = __half2float(bucket_ips[std::abs(i2)]) > 0.f;
@@ -2983,31 +3020,32 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
                     if( i1 >= 0 and i2 >= 0 ) {
                         uint8_t sign = uint8_t(1)^sign1^sign2;
                         queue.sieve_pairs.push_back( { { bucket_indices[i1], bucket_indices[i2] }, 
-                                                    host_len_out[i],
+                                                    host_results[i].len,
                                                     sign
                                                     } );
                     } else {
                         assert( i1 <= 0 and i2 <= 0 );
                         uint8_t sign = sign1|(sign2<<1);
                         queue.sieve_triples.push_back( { { b_index, bucket_indices[-i1], bucket_indices[-i2] },
-                                                        host_len_out[i],
+                                                        host_results[i].len,
                                                         sign
                         });
                     }
                 }
                 
                 if( lift ) {
-                    if( host_nr_results[1] > 0.9 * max_results ) 
+                    const uint32_t lift_result_limit = uint32_t(std::min(last_lift_result_capacity, size_t(max_results)));
+                    if( host_nr_results[1] > 0.9 * lift_result_limit ) 
                         std::cerr << "Close to overflow " << host_nr_results[1] << std::endl;
 
-                    if( host_nr_results[1] > max_results ) {
-                        host_nr_results[1] = max_results;
+                    if( host_nr_results[1] > lift_result_limit ) {
+                        host_nr_results[1] = lift_result_limit;
                     }
 
 
                     for( size_t i = 0; i < host_nr_results[1]; i++ ) {
-                        int i1 = ((int*)host_lift_indices)[2*i];
-                        int i2 = ((int*)host_lift_indices)[2*i+1];
+                        int i1 = host_lift_results[i].i1;
+                        int i2 = host_lift_results[i].i2;
                         
                         //std::cerr << i1 << " " << i2 << std::endl;
 
@@ -3016,7 +3054,7 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
 
                         uint8_t sign = uint8_t(1)^sign1^sign2;
                         queue.lift_pairs.push_back( { { bucket_indices[i1], bucket_indices[i2] },
-                                                        host_lift_len_out[i],
+                                                        host_lift_results[i].len,
                                                         sign                    
                                                     } );        
                     }
