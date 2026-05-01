@@ -2100,8 +2100,8 @@ void GPUStreamGeneral::global_init(const std::vector<std::vector<float>> &mu_R, 
     CUDA_CHECK( cudaMemcpyAsync(dev_uid_coeffs, host_len_in+mu_R_size, uid_size * sizeof(UidType), cudaMemcpyHostToDevice, stream) );
     // watch out for different type size of uid
 
-    // Wait for all data to arrive 
-    CUDA_CHECK( cudaDeviceSynchronize() );
+    // Wait for this stream's global data upload before dependent work starts.
+    CUDA_CHECK( cudaStreamSynchronize(stream) );
 }
 
 void GPUStreamGeneral::dh_init(const std::vector<std::vector<float>> &mu_L, const std::vector<std::vector<float>> &dh_vecs ) {
@@ -2136,8 +2136,8 @@ void GPUStreamGeneral::dh_init(const std::vector<std::vector<float>> &mu_L, cons
     CUDA_CHECK( cudaMemcpyAsync(dev_mu_L, host_len_in, mu_L_size * sizeof(float), cudaMemcpyHostToDevice, stream) ); 
     CUDA_CHECK( cudaMemcpyAsync(dev_dual_hash, host_len_in+mu_L_size, dual_hash_size * sizeof(float), cudaMemcpyHostToDevice, stream) );
  
-    // Wait for all data to arrive 
-    CUDA_CHECK( cudaDeviceSynchronize() );
+    // Wait for this stream's dual-hash data upload before dependent work starts.
+    CUDA_CHECK( cudaStreamSynchronize(stream) );
 }
  
 // ------------------------ HELPER ---------------------- //
@@ -2322,8 +2322,8 @@ VECDIM))
 
         reorder( dev_B, nr_buckets );
 
-        // Wait for bucket to be ready
-        CUDA_CHECK( cudaDeviceSynchronize() );
+        // Wait for this stream's bucket-center preprocessing to be ready.
+        CUDA_CHECK( cudaStreamSynchronize(stream) );
 
 
     } else if( bucketer == "bdgl" ) {
