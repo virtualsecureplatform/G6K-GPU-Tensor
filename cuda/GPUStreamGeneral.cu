@@ -1878,6 +1878,8 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             host_alloc = nullptr;
             dev_alloc = nullptr;
             global_alloc = nullptr;
+            d2h_process_slot = 0;
+            d2h_enqueue_slot = 1;
             CUDA_CHECK( cudaSetDevice( _device ) );
         }
 
@@ -1888,7 +1890,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
 
             // Create events used for syncing
             CUDA_CHECK( cudaEventCreateWithFlags( &H2D, cudaEventDisableTiming) ); 
-            CUDA_CHECK( cudaEventCreateWithFlags( &D2H, cudaEventDisableTiming) );
+            for( int i = 0; i < 2; i++ )
+                CUDA_CHECK( cudaEventCreateWithFlags( &D2H[i], cudaEventDisableTiming) );
           
             // create events for benchmarking
             if( benchmark ) {
@@ -1926,12 +1929,27 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             const size_t host_X_offset = reserve_host(Xsize * sizeof(Xtype));
             const size_t host_X_extend_offset = reserve_host(size_t(VECNUM*MAX_EXTEND) * sizeof(Xtype));
             const size_t host_len_in_offset = reserve_host(lensize * sizeof(lentype));
-            const size_t host_len_out_offset = reserve_host(lensize * sizeof(lentype));
-            const size_t host_lift_len_out_offset = reserve_host(lensize * sizeof(lentype));
+            const size_t host_len_out_offsets[] = {
+                reserve_host(lensize * sizeof(lentype)),
+                reserve_host(lensize * sizeof(lentype))
+            };
+            const size_t host_lift_len_out_offsets[] = {
+                reserve_host(lensize * sizeof(lentype)),
+                reserve_host(lensize * sizeof(lentype))
+            };
             const size_t host_ips_offset = reserve_host(max_results * sizeof(iptype));
-            const size_t host_indices_offset = reserve_host(max_results * sizeof(indextype));
-            const size_t host_lift_indices_offset = reserve_host(max_lift_results * sizeof(indextype));
-            const size_t host_nr_results_offset = reserve_host(2 * sizeof(indextype));
+            const size_t host_indices_offsets[] = {
+                reserve_host(max_results * sizeof(indextype)),
+                reserve_host(max_results * sizeof(indextype))
+            };
+            const size_t host_lift_indices_offsets[] = {
+                reserve_host(max_lift_results * sizeof(indextype)),
+                reserve_host(max_lift_results * sizeof(indextype))
+            };
+            const size_t host_nr_results_offsets[] = {
+                reserve_host(2 * sizeof(indextype)),
+                reserve_host(2 * sizeof(indextype))
+            };
 
             host_offset = align_up(host_offset);
             CUDA_CHECK( cudaMallocHost(&host_alloc, host_offset) );
@@ -1939,14 +1957,21 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             host_X = reinterpret_cast<Xtype*>(host_base + host_X_offset);
             host_X_extend = reinterpret_cast<Xtype*>(host_base + host_X_extend_offset);
             host_len_in = reinterpret_cast<lentype*>(host_base + host_len_in_offset);
-            host_len_out = reinterpret_cast<lentype*>(host_base + host_len_out_offset);
-            host_lift_len_out = reinterpret_cast<lentype*>(host_base + host_lift_len_out_offset);
             host_ips = reinterpret_cast<iptype*>(host_base + host_ips_offset);
-            host_indices = reinterpret_cast<indextype*>(host_base + host_indices_offset);
-            host_lift_indices = reinterpret_cast<indextype*>(host_base + host_lift_indices_offset);
-            host_nr_results = reinterpret_cast<indextype*>(host_base + host_nr_results_offset);
+            for( int i = 0; i < 2; i++ ) {
+                host_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_len_out_offsets[i]);
+                host_lift_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_lift_len_out_offsets[i]);
+                host_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_indices_offsets[i]);
+                host_lift_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_lift_indices_offsets[i]);
+                host_nr_results_slots[i] = reinterpret_cast<indextype*>(host_base + host_nr_results_offsets[i]);
+                host_nr_results_slots[i][0] = host_nr_results_slots[i][1] = indextype(0);
+            }
 
-            host_nr_results[0] = host_nr_results[1] = indextype(0);
+            host_len_out = host_len_out_slots[0];
+            host_lift_len_out = host_lift_len_out_slots[0];
+            host_indices = host_indices_slots[0];
+            host_lift_indices = host_lift_indices_slots[0];
+            host_nr_results = host_nr_results_slots[0];
 
             // Malloc device memory
             size_t Bsize = size_t(VECDIM) * max_nr_buckets;
@@ -2047,7 +2072,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
 void GPUStreamGeneral::free() {
             // Destory events and stream
             CUDA_CHECK( cudaEventDestroy( H2D ) );
-            CUDA_CHECK( cudaEventDestroy( D2H ) );
+            for( int i = 0; i < 2; i++ )
+                CUDA_CHECK( cudaEventDestroy( D2H[i] ) );
             CUDA_CHECK( cudaStreamDestroy( stream ));
             cublasDestroy(handle);
 
@@ -2064,6 +2090,13 @@ void GPUStreamGeneral::free() {
             host_indices = nullptr;
             host_lift_indices = nullptr;
             host_nr_results = nullptr;
+            for( int i = 0; i < 2; i++ ) {
+                host_len_out_slots[i] = nullptr;
+                host_lift_len_out_slots[i] = nullptr;
+                host_indices_slots[i] = nullptr;
+                host_lift_indices_slots[i] = nullptr;
+                host_nr_results_slots[i] = nullptr;
+            }
 
             CUDA_CHECK( cudaFree( dev_alloc ) );
             
@@ -2109,6 +2142,13 @@ void GPUStreamGeneral::bind(std::vector<Entry> & _db, std::vector<CompressedEntr
 void GPUStreamGeneral::reset_results() {
     cdb_range = { 0,0 };
     cdb_range_prev = { 0,0 };
+    d2h_process_slot = 0;
+    d2h_enqueue_slot = 1;
+    host_len_out = host_len_out_slots[0];
+    host_lift_len_out = host_lift_len_out_slots[0];
+    host_indices = host_indices_slots[0];
+    host_lift_indices = host_lift_indices_slots[0];
+    host_nr_results = host_nr_results_slots[0];
 }
 
 
@@ -2613,7 +2653,7 @@ void GPUStreamGeneral::B_launch_kernel() {
 void GPUStreamGeneral::B_receive_data(std::vector<triple_bucket> &bucket, const size_t max_vecs_per_bucket, bool onlyprocess) {
 
             // wait for data to arrive
-            CUDA_CHECK( cudaEventSynchronize( D2H ) );
+            CUDA_CHECK( cudaEventSynchronize( D2H[0] ) );
             
             const size_t cdb_start = onlyprocess ? cdb_range.first : cdb_range_prev.first;
             const size_t cdb_end = onlyprocess ? cdb_range.second : cdb_range_prev.second;
@@ -2641,7 +2681,7 @@ void GPUStreamGeneral::B_receive_data(std::vector<triple_bucket> &bucket, const 
                 CUDA_CHECK( cudaMemcpyAsync(host_ips, dev_ips, results * sizeof(iptype), cudaMemcpyDeviceToHost, stream) );
 
                 // triggers when results retrieved
-                CUDA_CHECK( cudaEventRecord(D2H, stream));
+                CUDA_CHECK( cudaEventRecord(D2H[0], stream));
             }
     }
 
@@ -2868,8 +2908,31 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 }
 
 void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
+            if( !onlyprocess ) {
+                const size_t results = VECNUM;
+                const int enqueue_slot = d2h_enqueue_slot;
+
+                CUDA_CHECK( cudaMemcpyAsync(host_indices_slots[enqueue_slot], dev_indices, results * 2 * sizeof(indextype) , cudaMemcpyDeviceToHost, stream) );
+                CUDA_CHECK( cudaMemcpyAsync(host_len_out_slots[enqueue_slot], dev_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
+
+                if( lift ) {
+                    CUDA_CHECK( cudaMemcpyAsync(host_lift_indices_slots[enqueue_slot], dev_lift_indices, results * 2 * sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
+                    CUDA_CHECK( cudaMemcpyAsync(host_lift_len_out_slots[enqueue_slot], dev_lift_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
+                }
+
+                CUDA_CHECK( cudaMemcpyAsync(host_nr_results_slots[enqueue_slot], dev_nr_results, 2*sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
+                CUDA_CHECK( cudaEventRecord(D2H[enqueue_slot], stream));
+            }
+
+            const int process_slot = d2h_process_slot;
+            host_indices = host_indices_slots[process_slot];
+            host_len_out = host_len_out_slots[process_slot];
+            host_lift_indices = host_lift_indices_slots[process_slot];
+            host_lift_len_out = host_lift_len_out_slots[process_slot];
+            host_nr_results = host_nr_results_slots[process_slot];
+
             // wait for data to arrive
-            CUDA_CHECK( cudaEventSynchronize( D2H ) );
+            CUDA_CHECK( cudaEventSynchronize( D2H[process_slot] ) );
 
             if( benchmark )
                 bench_alternation = !bench_alternation;
@@ -2947,21 +3010,7 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
             }
 
             if( !onlyprocess ) {
-                const size_t results = max_results;
-                // retrieve new results
-                CUDA_CHECK( cudaMemcpyAsync(host_indices, dev_indices, results * 2 * sizeof(indextype) , cudaMemcpyDeviceToHost, stream) );
-                CUDA_CHECK( cudaMemcpyAsync(host_len_out, dev_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
-                
-                if( lift ) {
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_indices, dev_lift_indices, results * 2 * sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
-                    CUDA_CHECK( cudaMemcpyAsync(host_lift_len_out, dev_lift_len_out, results * sizeof(lentype), cudaMemcpyDeviceToHost, stream) );
-                }
-
-
-                CUDA_CHECK( cudaMemcpyAsync(host_nr_results, dev_nr_results, 2*sizeof(indextype), cudaMemcpyDeviceToHost, stream) );
-                
-                // triggers when results retrieved
-                CUDA_CHECK( cudaEventRecord(D2H, stream));
+                std::swap(d2h_process_slot, d2h_enqueue_slot);
             }
     }
 
@@ -3033,7 +3082,7 @@ void GPUStreamGeneral::E_launch_kernel( const size_t extend_left ) {
 void GPUStreamGeneral::E_receive_data( const size_t extend_left, bool onlyprocess) {
             
     // wait for data to arrive
-    CUDA_CHECK( cudaEventSynchronize( D2H ) );
+    CUDA_CHECK( cudaEventSynchronize( D2H[0] ) );
     
     const size_t db_start = onlyprocess ? cdb_range.first : cdb_range_prev.first;
     const size_t db_end = onlyprocess ? cdb_range.second : cdb_range_prev.second;
@@ -3057,7 +3106,7 @@ void GPUStreamGeneral::E_receive_data( const size_t extend_left, bool onlyproces
         // uid reusing _indices
         CUDA_CHECK( cudaMemcpyAsync(host_indices, dev_indices, results * sizeof(UidType), cudaMemcpyDeviceToHost, stream) );
         // triggers when results retrieved
-        CUDA_CHECK( cudaEventRecord(D2H, stream));
+        CUDA_CHECK( cudaEventRecord(D2H[0], stream));
     } else {
         cdb_range_prev = {0,0};
         cdb_range = {0,0};
@@ -3111,7 +3160,7 @@ void GPUStreamGeneral::R_launch_kernel( ) {
 void GPUStreamGeneral::R_receive_data(bool onlyprocess) {
 
             // wait for data to arrive
-            CUDA_CHECK( cudaEventSynchronize( D2H ) );
+            CUDA_CHECK( cudaEventSynchronize( D2H[0] ) );
             
             const size_t db_start = onlyprocess ? cdb_range.first : cdb_range_prev.first;
             const size_t db_end = onlyprocess ? cdb_range.second : cdb_range_prev.second;
@@ -3133,7 +3182,7 @@ void GPUStreamGeneral::R_receive_data(bool onlyprocess) {
                 CUDA_CHECK( cudaMemcpyAsync(host_indices, dev_indices, results * sizeof(UidType), cudaMemcpyDeviceToHost, stream) );
 
                 // triggers when results retrieved
-                CUDA_CHECK( cudaEventRecord(D2H, stream));
+                CUDA_CHECK( cudaEventRecord(D2H[0], stream));
             } else {
                 cdb_range_prev = {0,0};
                 cdb_range = {0,0};

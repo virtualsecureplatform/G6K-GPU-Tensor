@@ -131,6 +131,11 @@ class GPUStreamGeneral {
         indextype* host_indices; // output
         indextype* host_lift_indices;
         indextype* host_nr_results; // output
+        lentype* host_len_out_slots[2];
+        lentype* host_lift_len_out_slots[2];
+        indextype* host_indices_slots[2];
+        indextype* host_lift_indices_slots[2];
+        indextype* host_nr_results_slots[2];
 
         void* dev_alloc;
         void* global_alloc;
@@ -162,7 +167,9 @@ class GPUStreamGeneral {
         cudaStream_t stream;
         cublasHandle_t handle;
         cudaEvent_t H2D;
-        cudaEvent_t D2H;
+        cudaEvent_t D2H[2];
+        int d2h_process_slot;
+        int d2h_enqueue_slot;
     public:
         GPUStreamGeneral(const int device, const size_t n, const std::string gpu_bucketer, const bool gpu_triple, const size_t multi_bucket, const size_t max_nr_buckets, const bool global, std::vector<Entry> &db, std::vector<CompressedEntry> &cdb, const size_t dual_hash_vecs=64);
         void malloc( global_dev_ptrs &dev_ptrs );
