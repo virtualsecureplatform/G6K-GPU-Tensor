@@ -12,6 +12,10 @@ int main(int argc, char **argv) {
 
     if( argc > 2 )
         mode = atoi(argv[2]); 
+    
+    size_t streams = 8;
+    if( argc > 3 )
+        streams = std::max<size_t>(1, atoi(argv[3]));
 
     const int device = 0;
     const size_t n = 160;
@@ -77,8 +81,7 @@ int main(int argc, char **argv) {
         buckets[b].b_len = db[b].len;
     }
 
-    size_t streams = 8;
-    GPUStreamGeneral* gpu[streams];  
+    std::vector<GPUStreamGeneral*> gpu(streams);
     global_dev_ptrs dev_ptrs;
     for( size_t s = 0; s < streams; s++ ) {
         gpu[s] = new GPUStreamGeneral(device, n, gpu_bucketer, gpu_triple, multi_bucket, max_nr_buckets, s==0, db, cdb, dual_hash_vecs);

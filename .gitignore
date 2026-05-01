@@ -4,6 +4,8 @@
 *.pyc
 *.o
 *.so
+cuda/bench_quality
+cuda/bench_sieving
 
 # Specific Files #
 ##################
