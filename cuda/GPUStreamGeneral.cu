@@ -2491,33 +2491,33 @@ void GPUStreamGeneral::B_launch_kernel() {
 					case 1:
 					switch( multi_bucket ) {
 						case 1: switch( VECDIM ) {
-								case 64: kernel_bdgl_bucketing_1block<64,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 96: kernel_bdgl_bucketing_1block<96,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_1block<128,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 64: kernel_bdgl_bucketing_1block<64,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_1block<96,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_1block<128,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 								case 160: assert(false); break;
 							} break;
 						case 2: switch( VECDIM ) {
-								case 64: kernel_bdgl_bucketing_1block<64,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 96: kernel_bdgl_bucketing_1block<96,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_1block<128,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 64: kernel_bdgl_bucketing_1block<64,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_1block<96,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_1block<128,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 								case 160: assert(false); break;
 							} break;
                         case 4: switch( VECDIM ) {
-								case 64: kernel_bdgl_bucketing_1block<64,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 96: kernel_bdgl_bucketing_1block<96,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_1block<128,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 64: kernel_bdgl_bucketing_1block<64,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_1block<96,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_1block<128,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 								case 160: assert(false); break;
 							} break;
                         case 8: switch( VECDIM ) {
-								case 64: kernel_bdgl_bucketing_1block<64,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 96: kernel_bdgl_bucketing_1block<96,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_1block<128,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 64: kernel_bdgl_bucketing_1block<64,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_1block<96,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_1block<128,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 								case 160: assert(false); break;
 							} break;
                         case 16: switch( VECDIM ) {
-								case 64: kernel_bdgl_bucketing_1block<64,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 96: kernel_bdgl_bucketing_1block<96,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_1block<128,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 64: kernel_bdgl_bucketing_1block<64,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_1block<96,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_1block<128,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 								case 160: assert(false); break;
 							} break;
 
@@ -2526,33 +2526,33 @@ void GPUStreamGeneral::B_launch_kernel() {
 					switch( multi_bucket ) {
 						case 1: switch( VECDIM ) {
 								case 64: assert(false); break;
-								case 96: kernel_bdgl_bucketing_2block<96,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_2block<128,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 160: kernel_bdgl_bucketing_2block<160,1><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_2block<96,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_2block<128,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 160: kernel_bdgl_bucketing_2block<160,1><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 							} break;
 						case 2: switch( VECDIM ) {
 								case 64: assert(false); break;
-								case 96: kernel_bdgl_bucketing_2block<96,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_2block<128,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 160: kernel_bdgl_bucketing_2block<160,2><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_2block<96,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_2block<128,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 160: kernel_bdgl_bucketing_2block<160,2><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 							} break;
                         case 4: switch( VECDIM ) {
 								case 64: assert(false); break;
-								case 96: kernel_bdgl_bucketing_2block<96,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_2block<128,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 160: kernel_bdgl_bucketing_2block<160,4><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_2block<96,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_2block<128,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 160: kernel_bdgl_bucketing_2block<160,4><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 							} break;
                         case 8: switch( VECDIM ) {
 								case 64: assert(false); break;
-								case 96: kernel_bdgl_bucketing_2block<96,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_2block<128,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 160: kernel_bdgl_bucketing_2block<160,8><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_2block<96,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_2block<128,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 160: kernel_bdgl_bucketing_2block<160,8><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 							} break;
                         case 16: switch( VECDIM ) {
 								case 64: assert(false); break;
-								case 96: kernel_bdgl_bucketing_2block<96,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 128: kernel_bdgl_bucketing_2block<128,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
-								case 160: kernel_bdgl_bucketing_2block<160,16><<<blocks, threads>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 96: kernel_bdgl_bucketing_2block<96,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 128: kernel_bdgl_bucketing_2block<128,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
+								case 160: kernel_bdgl_bucketing_2block<160,16><<<blocks, threads, 0, stream>>>(dev_YR_half, (int32_t)n, (uint32_t)nr_vecs, (int)bdgl_local_buckets, bdgl_seed, dev_indices, dev_ips); break;
 							} break;
 					} break;
 				}                
