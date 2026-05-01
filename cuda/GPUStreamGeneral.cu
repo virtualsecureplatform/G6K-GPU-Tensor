@@ -1876,6 +1876,8 @@ inline void convert8floats2half( const float* floats, half* halfs ) {
 
 GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std::string _gpu_bucketer, const bool _gpu_triple, const size_t _multi_bucket, const size_t _max_nr_buckets, const bool _global, std::vector<Entry> & _db, std::vector<CompressedEntry> &_cdb, const size_t _dual_hash_vecs) : device(_device), n(_n), bucketer(_gpu_bucketer), triple(_gpu_triple), multi_bucket(_multi_bucket), max_nr_buckets(_max_nr_buckets), global(_global), db(_db.data()), cdb(_cdb.data()), VECDIM( n_to_vecdim(_n)), lift(_dual_hash_vecs>0), dual_hash_vecs(_dual_hash_vecs) {
             host_alloc = nullptr;
+            dev_alloc = nullptr;
+            global_alloc = nullptr;
             CUDA_CHECK( cudaSetDevice( _device ) );
         }
 
@@ -1950,38 +1952,82 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             size_t Bsize = size_t(VECDIM) * max_nr_buckets;
             size_t DH_size = size_t(VECNUM) * dual_hash_vecs; 
 
-            CUDA_CHECK( cudaMalloc(&dev_X, Xsize*sizeof(Xtype)) );
-            CUDA_CHECK( cudaMalloc(&dev_X_half, Xsize*sizeof(half)) );
-            CUDA_CHECK( cudaMalloc(&dev_X_float, Xsize*sizeof(float)) );
-            CUDA_CHECK( cudaMalloc(&dev_YR_half, Xsize*sizeof(half)) );
-            CUDA_CHECK( cudaMalloc(&dev_YR_float, Xsize*sizeof(float)) );
-            CUDA_CHECK( cudaMalloc(&dev_DH, DH_size*sizeof(uint8_t)) );
-            CUDA_CHECK( cudaMalloc(&dev_X_extend, size_t(VECNUM*MAX_EXTEND)*sizeof(Xtype)) );
-            CUDA_CHECK( cudaMalloc(&dev_len_in, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMalloc(&dev_len_out, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMalloc(&dev_lift_len_out, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMalloc(&dev_len_half, lensize*sizeof(half)) );
-            CUDA_CHECK( cudaMalloc(&dev_ips, max_results * sizeof(iptype)) );
-            CUDA_CHECK( cudaMalloc(&dev_indices, max_results * sizeof(indextype)) );
-            CUDA_CHECK( cudaMalloc(&dev_lift_indices, max_lift_results * sizeof(indextype)) );
-            CUDA_CHECK( cudaMalloc(&dev_nr_results, 2 * sizeof(indextype)) );
+            size_t dev_offset = 0;
+            auto reserve_dev = [&dev_offset, align_up](size_t bytes) {
+                dev_offset = align_up(dev_offset);
+                const size_t offset = dev_offset;
+                dev_offset += bytes;
+                return offset;
+            };
 
+            const size_t dev_X_offset = reserve_dev(Xsize * sizeof(Xtype));
+            const size_t dev_X_half_offset = reserve_dev(Xsize * sizeof(half));
+            const size_t dev_X_float_offset = reserve_dev(Xsize * sizeof(float));
+            const size_t dev_YR_half_offset = reserve_dev(Xsize * sizeof(half));
+            const size_t dev_YR_float_offset = reserve_dev(Xsize * sizeof(float));
+            const size_t dev_DH_offset = reserve_dev(DH_size * sizeof(dhtype));
+            const size_t dev_X_extend_offset = reserve_dev(size_t(VECNUM*MAX_EXTEND) * sizeof(Xtype));
+            const size_t dev_len_in_offset = reserve_dev(lensize * sizeof(lentype));
+            const size_t dev_len_out_offset = reserve_dev(lensize * sizeof(lentype));
+            const size_t dev_lift_len_out_offset = reserve_dev(lensize * sizeof(lentype));
+            const size_t dev_len_half_offset = reserve_dev(lensize * sizeof(half));
+            const size_t dev_ips_offset = reserve_dev(max_results * sizeof(iptype));
+            const size_t dev_indices_offset = reserve_dev(max_results * sizeof(indextype));
+            const size_t dev_lift_indices_offset = reserve_dev(max_lift_results * sizeof(indextype));
+            const size_t dev_nr_results_offset = reserve_dev(2 * sizeof(indextype));
 
+            dev_offset = align_up(dev_offset);
+            CUDA_CHECK( cudaMalloc(&dev_alloc, dev_offset) );
+            char* dev_base = static_cast<char*>(dev_alloc);
+            dev_X = reinterpret_cast<Xtype*>(dev_base + dev_X_offset);
+            dev_X_half = reinterpret_cast<half*>(dev_base + dev_X_half_offset);
+            dev_X_float = reinterpret_cast<float*>(dev_base + dev_X_float_offset);
+            dev_YR_half = reinterpret_cast<half*>(dev_base + dev_YR_half_offset);
+            dev_YR_float = reinterpret_cast<float*>(dev_base + dev_YR_float_offset);
+            dev_DH = reinterpret_cast<dhtype*>(dev_base + dev_DH_offset);
+            dev_X_extend = reinterpret_cast<Xtype*>(dev_base + dev_X_extend_offset);
+            dev_len_in = reinterpret_cast<lentype*>(dev_base + dev_len_in_offset);
+            dev_len_out = reinterpret_cast<lentype*>(dev_base + dev_len_out_offset);
+            dev_lift_len_out = reinterpret_cast<lentype*>(dev_base + dev_lift_len_out_offset);
+            dev_len_half = reinterpret_cast<half*>(dev_base + dev_len_half_offset);
+            dev_ips = reinterpret_cast<iptype*>(dev_base + dev_ips_offset);
+            dev_indices = reinterpret_cast<indextype*>(dev_base + dev_indices_offset);
+            dev_lift_indices = reinterpret_cast<indextype*>(dev_base + dev_lift_indices_offset);
+            dev_nr_results = reinterpret_cast<indextype*>(dev_base + dev_nr_results_offset);
 
             if( global ) {
-                CUDA_CHECK( cudaMalloc(&dev_B, Bsize*sizeof(half)) );
-                CUDA_CHECK( cudaMalloc(&dev_B_float, Bsize*sizeof(float)) );
-
                 // compute mu size
                 size_t mu_L_size = MAX_LIFT * VECDIM;
                 size_t mu_R_size = VECDIM * VECDIM;
                 size_t uid_size = VECDIM;
                 size_t dual_hash_size = dual_hash_vecs * MAX_LIFT;
-                CUDA_CHECK( cudaMalloc(&dev_mu_L, mu_L_size * sizeof(float)) );
-                CUDA_CHECK( cudaMalloc(&dev_mu_R, mu_R_size * sizeof(float)) );
-                CUDA_CHECK( cudaMalloc(&dev_q_transform, mu_R_size * sizeof(float)) );
-                CUDA_CHECK( cudaMalloc(&dev_dual_hash, dual_hash_size * sizeof(float)) ); 
-                CUDA_CHECK( cudaMalloc(&dev_uid_coeffs, uid_size * sizeof(UidType)) );
+
+                size_t global_offset = 0;
+                auto reserve_global = [&global_offset, align_up](size_t bytes) {
+                    global_offset = align_up(global_offset);
+                    const size_t offset = global_offset;
+                    global_offset += bytes;
+                    return offset;
+                };
+
+                const size_t dev_B_offset = reserve_global(Bsize * sizeof(half));
+                const size_t dev_B_float_offset = reserve_global(Bsize * sizeof(float));
+                const size_t dev_mu_L_offset = reserve_global(mu_L_size * sizeof(float));
+                const size_t dev_mu_R_offset = reserve_global(mu_R_size * sizeof(float));
+                const size_t dev_q_transform_offset = reserve_global(mu_R_size * sizeof(float));
+                const size_t dev_dual_hash_offset = reserve_global(dual_hash_size * sizeof(float));
+                const size_t dev_uid_coeffs_offset = reserve_global(uid_size * sizeof(UidType));
+
+                global_offset = align_up(global_offset);
+                CUDA_CHECK( cudaMalloc(&global_alloc, global_offset) );
+                char* global_base = static_cast<char*>(global_alloc);
+                dev_B = reinterpret_cast<half*>(global_base + dev_B_offset);
+                dev_B_float = reinterpret_cast<float*>(global_base + dev_B_float_offset);
+                dev_mu_L = reinterpret_cast<float*>(global_base + dev_mu_L_offset);
+                dev_mu_R = reinterpret_cast<float*>(global_base + dev_mu_R_offset);
+                dev_q_transform = reinterpret_cast<float*>(global_base + dev_q_transform_offset);
+                dev_dual_hash = reinterpret_cast<float*>(global_base + dev_dual_hash_offset);
+                dev_uid_coeffs = reinterpret_cast<UidType*>(global_base + dev_uid_coeffs_offset);
 
                 dev_ptrs = { dev_mu_L, dev_mu_R, dev_uid_coeffs, dev_dual_hash, dev_B, dev_B_float, dev_q_transform };
             } else {
@@ -2019,45 +2065,30 @@ void GPUStreamGeneral::free() {
             host_lift_indices = nullptr;
             host_nr_results = nullptr;
 
-            CUDA_CHECK( cudaFree( dev_X ) );
-            CUDA_CHECK( cudaFree( dev_X_half ) );
-            CUDA_CHECK( cudaFree( dev_X_float ) );
-            CUDA_CHECK( cudaFree( dev_YR_half ) );
-            CUDA_CHECK( cudaFree( dev_YR_float ) );
-            CUDA_CHECK( cudaFree( dev_DH ) );
-            CUDA_CHECK( cudaFree( dev_X_extend ) );
-            CUDA_CHECK( cudaFree( dev_len_in ) );
-            CUDA_CHECK( cudaFree( dev_len_out ) );
-            CUDA_CHECK( cudaFree( dev_lift_len_out ) );
-            CUDA_CHECK( cudaFree( dev_len_half ) );
-            CUDA_CHECK( cudaFree( dev_ips ) );
-            CUDA_CHECK( cudaFree( dev_indices ) );
-            CUDA_CHECK( cudaFree( dev_lift_indices ) );
-            CUDA_CHECK( cudaFree( dev_nr_results ) );
+            CUDA_CHECK( cudaFree( dev_alloc ) );
             
+            dev_alloc = nullptr;
             dev_X = nullptr;
             dev_X_half = nullptr;
+            dev_X_float = nullptr;
             dev_YR_half = nullptr;
+            dev_YR_float = nullptr;
             dev_DH = nullptr;
             dev_X_extend = nullptr;
             dev_len_in = nullptr;
             dev_len_out = nullptr;
             dev_lift_len_out = nullptr;
+            dev_len_half = nullptr;
             dev_ips = nullptr;
             dev_indices = nullptr;
             dev_lift_indices = nullptr;
             dev_nr_results = nullptr;
 
             if( global ) {
-                CUDA_CHECK( cudaFree( dev_B ) );
-                CUDA_CHECK( cudaFree( dev_B_float ) );
-                CUDA_CHECK( cudaFree( dev_mu_L ) );
-                CUDA_CHECK( cudaFree( dev_mu_R ) );
-                CUDA_CHECK( cudaFree( dev_uid_coeffs ) );
-                CUDA_CHECK( cudaFree( dev_dual_hash ) );
-                CUDA_CHECK( cudaFree( dev_q_transform ) );
+                CUDA_CHECK( cudaFree( global_alloc ) );
             }
 
+            global_alloc = nullptr;
             dev_B = nullptr;
             dev_B_float = nullptr;
             dev_mu_L = nullptr;

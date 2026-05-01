@@ -132,6 +132,8 @@ class GPUStreamGeneral {
         indextype* host_lift_indices;
         indextype* host_nr_results; // output
 
+        void* dev_alloc;
+        void* global_alloc;
         Xtype* dev_X;
         half* dev_X_half;
         float* dev_X_float;
