@@ -1880,6 +1880,13 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             global_alloc = nullptr;
             d2h_process_slot = 0;
             d2h_enqueue_slot = 1;
+            for( int i = 0; i < 2; i++ ) {
+                host_len_out_slots[i] = nullptr;
+                host_lift_len_out_slots[i] = nullptr;
+                host_indices_slots[i] = nullptr;
+                host_lift_indices_slots[i] = nullptr;
+                host_nr_results_slots[i] = nullptr;
+            }
             CUDA_CHECK( cudaSetDevice( _device ) );
         }
 
@@ -2144,11 +2151,13 @@ void GPUStreamGeneral::reset_results() {
     cdb_range_prev = { 0,0 };
     d2h_process_slot = 0;
     d2h_enqueue_slot = 1;
-    host_len_out = host_len_out_slots[0];
-    host_lift_len_out = host_lift_len_out_slots[0];
-    host_indices = host_indices_slots[0];
-    host_lift_indices = host_lift_indices_slots[0];
-    host_nr_results = host_nr_results_slots[0];
+    if( host_alloc != nullptr ) {
+        host_len_out = host_len_out_slots[0];
+        host_lift_len_out = host_lift_len_out_slots[0];
+        host_indices = host_indices_slots[0];
+        host_lift_indices = host_lift_indices_slots[0];
+        host_nr_results = host_nr_results_slots[0];
+    }
 }
 
 
