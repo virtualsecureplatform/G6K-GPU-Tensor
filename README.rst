@@ -57,6 +57,8 @@ To force the A100 target explicitly:
 
 The standalone benchmark builder in ``cuda/bench_sieving.sh`` uses the same detection logic and can also be overridden with ``SMS=80``.
 
+On A100, the default CUDA build uses ``GPUVECNUM=131072`` to allow larger buckets and result buffers. Override it with ``--gpuvecnum`` if GPU memory is constrained.
+
 
 Code examples
 =============

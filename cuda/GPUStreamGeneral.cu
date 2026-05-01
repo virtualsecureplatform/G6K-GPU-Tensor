@@ -33,7 +33,7 @@ using namespace nvcuda;
     }
 
 #ifndef GPUVECNUM
-#define GPUVECNUM 65536
+#define GPUVECNUM 131072
 #endif
 
 #define VECNUM GPUVECNUM
