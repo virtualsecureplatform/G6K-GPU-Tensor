@@ -12,6 +12,7 @@ enable_stats=0
 enable_ndebug=0
 maxsievingdim=128
 gpuvecnum=65536
+cuda_sms=""
 enable_ggdb=0
 enable_jobs=0
 enable_templated_dim=0
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--gpuvecnum)
 			gpuvecnum=$2
+			shift
+			;;
+		--cuda-sm|--cuda-sms|--sms)
+			cuda_sms=$2
 			shift
 			;;
 		-j|--jobs)
@@ -170,6 +175,17 @@ if [ "${have_nvcc}" = "yes" ]; then
 	echo "CUDA_FLAGS: ${CUDA_FLAGS}" &>> cuda_debug.log
 	echo "CUDA_LIBS: ${CUDA_LIBS}" &>> cuda_debug.log
 
+	if [ "${cuda_sms}" = "" ] && command -v nvidia-smi >/dev/null 2>&1; then
+		cuda_sms=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+			| awk -F. '{ gsub(/[^0-9]/, "", $1); gsub(/[^0-9]/, "", $2); if ($1 != "" && $2 != "") print $1 $2 }' \
+			| sort -n | uniq | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+	fi
+	if [ "${cuda_sms}" = "" ]; then
+		cuda_sms="80"
+	fi
+	cuda_sms=$(echo "${cuda_sms}" | tr ',' ' ')
+	echo "CUDA SM targets: ${cuda_sms}" &>> cuda_debug.log
+
 	EXTRAFLAGS="$EXTRAFLAGS -DHAVE_CUDA"
 
 	CUDA_CXX=""
@@ -189,6 +205,7 @@ NVCC=${NVCC}
 CUDA_FLAGS=${CUDA_FLAGS}
 CUDA_LIBS=${CUDA_LIBS}
 CUDA_CXX=${CUDA_CXX}
+SMS=${cuda_sms}
 EOF
 
 if [ "${only_conf}" = "1" ]; then

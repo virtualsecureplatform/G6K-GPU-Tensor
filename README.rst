@@ -44,6 +44,19 @@ Otherwise, you will need fplll and fpylll already installed and build the G6K Cy
 Remove ``-f`` option to compile faster (fewer optimisations). 
 The ``-y`` option significantly reduces the memory footprint, but disables the standard cpu-only sieves. See ``rebuild.sh`` for more options.
 
+CUDA architecture target
+------------------------
+
+When CUDA is enabled, ``rebuild.sh`` detects the locally visible NVIDIA GPU compute capabilities with ``nvidia-smi`` and writes them to ``Makefile.local`` as ``SMS``. On an NVIDIA A100 this should be ``SMS=80``, producing native ``sm_80`` code for the Tensor Core kernels.
+
+To force the A100 target explicitly:
+
+.. code-block:: bash
+
+    ./rebuild.sh -f -y --with-cuda yes --cuda-sm 80
+
+The standalone benchmark builder in ``cuda/bench_sieving.sh`` uses the same detection logic and can also be overridden with ``SMS=80``.
+
 
 Code examples
 =============

@@ -15,10 +15,11 @@ ifeq ($(HAVE_CUDA),1)
 ifeq ($(CUDA_CXX),)
 CUDA_CXX=$(CXX)
 endif
-SMS ?= 75 80 90
+SMS ?= 80
 CUDACXXFLAGS = -fPIC -Ofast -march=native -pthread -Wall -Wextra $(EXTRAFLAGS)
 NVCC_FLAGS += -ccbin $(CUDA_CXX) $(addprefix -Xcompiler ,$(CUDACXXFLAGS))
 NVCC_FLAGS += -std=c++11 -O3
+NVCC_FLAGS += $(NVCC_EXTRA_FLAGS)
 OBJ += ../cuda/GPUStreamGeneral.o
 CXXFLAGS += $(CUDA_FLAGS)
 LIBADD += $(CUDA_LIBS)
