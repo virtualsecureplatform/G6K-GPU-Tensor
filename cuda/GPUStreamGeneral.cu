@@ -1375,7 +1375,7 @@ void kernel_bucketing(half* a, half* b, const uint32_t bucketsize, uint32_t* buc
 }
 
 __shared__ uint32_t tmpwriteidx;
-constexpr int max_results_per_block = 128;
+constexpr int max_results_per_block = 64;
 __shared__ int resultbuffer[2*max_results_per_block];
 __noinline__ __device__ void save_result2(unsigned int cmask, int aid, int bid, int* __restrict__ results)
 {
@@ -1406,7 +1406,7 @@ __noinline__ __device__ void save_result3(unsigned int ai, int bi)
 // Assume ips are precomputed as 1/4 * lenbound - 1/2 * ||x||^2 - 1/4 * ||z||^2 + <x,z>
 template<int VECDIM, bool TRIPLE = false>
 __global__
-__launch_bounds__(256, 1)
+__launch_bounds__(128, 2)
 void kernel_triple_sieve(half* __restrict__ a, const half* __restrict__ len, const half* __restrict__ ips, const uint32_t bucketsize, uint32_t* __restrict__ nr_results, int* __restrict__ results)
 {
     typedef rowmat_frag_traits<16,16,16,__half> frag_traits;
@@ -1414,12 +1414,12 @@ void kernel_triple_sieve(half* __restrict__ a, const half* __restrict__ len, con
     typedef row_data<__half> data_type;
     typedef half ctype;
     
-    constexpr int warps_per_block = 8;
+    constexpr int warps_per_block = 4;
     constexpr int threads_per_block = warps_per_block * WARP_SIZE;
     constexpr int h_frags_per_warp = 4;
     constexpr int w_frags_per_warp = 4;
 
-    constexpr int h_warps_per_block = 2;
+    constexpr int h_warps_per_block = 1;
     constexpr int w_warps_per_block = 4;
 
     constexpr int h_cache_per_warp = (h_frags_per_warp * h_warps_per_block) / warps_per_block;
@@ -2796,8 +2796,8 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
         CUDA_CHECK( cudaMemsetAsync(dev_nr_results, 0, 2*sizeof(indextype), stream) );
         // Compute blocks/threads
-        const size_t blocks = last_bucketsize / 128;
-        const size_t threads = 256;
+        const size_t blocks = last_bucketsize / 64;
+        const size_t threads = 128;
 
 
         if( benchmark ) {
