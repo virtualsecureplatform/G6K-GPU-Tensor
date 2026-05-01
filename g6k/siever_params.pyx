@@ -117,7 +117,7 @@ cdef class SieverParams(object):
         if "gpus" not in kwds:
             kwds["gpus"] = 1
         if "streams_per_thread" not in kwds:
-            kwds["streams_per_thread"] = 1
+            kwds["streams_per_thread"] = 4
         if "dh_dim" not in kwds:
             kwds["dh_dim"] = 20
         if "dh_vecs" not in kwds:

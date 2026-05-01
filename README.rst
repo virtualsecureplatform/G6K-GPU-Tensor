@@ -59,6 +59,8 @@ The standalone benchmark builder in ``cuda/bench_sieving.sh`` uses the same dete
 
 On A100, the default CUDA build uses ``GPUVECNUM=131072`` to allow larger buckets and result buffers. Override it with ``--gpuvecnum`` if GPU memory is constrained.
 
+The default GPU runtime uses ``streams_per_thread=4``. This improves overlap on A100-class GPUs in the standalone sieve benchmark; reduce it explicitly if a run uses many CPU threads or otherwise becomes GPU-memory constrained.
+
 
 Code examples
 =============

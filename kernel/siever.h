@@ -466,7 +466,7 @@ public:
     
     bool gpu = true;
     size_t gpus = 1;
-    size_t streams_per_thread = 1;
+    size_t streams_per_thread = 4;
 
     size_t dh_dim = 16;
     size_t dh_vecs = 64;
