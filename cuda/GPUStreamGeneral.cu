@@ -1875,6 +1875,7 @@ inline void convert8floats2half( const float* floats, half* halfs ) {
 }
 
 GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std::string _gpu_bucketer, const bool _gpu_triple, const size_t _multi_bucket, const size_t _max_nr_buckets, const bool _global, std::vector<Entry> & _db, std::vector<CompressedEntry> &_cdb, const size_t _dual_hash_vecs) : device(_device), n(_n), bucketer(_gpu_bucketer), triple(_gpu_triple), multi_bucket(_multi_bucket), max_nr_buckets(_max_nr_buckets), global(_global), db(_db.data()), cdb(_cdb.data()), VECDIM( n_to_vecdim(_n)), lift(_dual_hash_vecs>0), dual_hash_vecs(_dual_hash_vecs) {
+            host_alloc = nullptr;
             CUDA_CHECK( cudaSetDevice( _device ) );
         }
 
@@ -1908,16 +1909,40 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             size_t max_results = std::max(multi_bucket, size_t(2)) * VECNUM;
             size_t max_lift_results = 2*VECNUM;
 
+            auto align_up = [](size_t offset) {
+                const size_t alignment = 128;
+                return (offset + alignment - 1) & ~(alignment - 1);
+            };
+            size_t host_offset = 0;
+            auto reserve_host = [&host_offset, align_up](size_t bytes) {
+                host_offset = align_up(host_offset);
+                const size_t offset = host_offset;
+                host_offset += bytes;
+                return offset;
+            };
 
-            CUDA_CHECK( cudaMallocHost(&host_X, Xsize*sizeof(Xtype)) );
-            CUDA_CHECK( cudaMallocHost(&host_X_extend, size_t(VECNUM*MAX_EXTEND)*sizeof(Xtype)) );
-            CUDA_CHECK( cudaMallocHost(&host_len_in, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMallocHost(&host_len_out, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMallocHost(&host_lift_len_out, lensize*sizeof(lentype)) );
-            CUDA_CHECK( cudaMallocHost(&host_ips, max_results * sizeof(iptype)) );
-            CUDA_CHECK( cudaMallocHost(&host_indices, max_results * sizeof(indextype)) );
-            CUDA_CHECK( cudaMallocHost(&host_lift_indices, max_lift_results * sizeof(indextype)) );
-            CUDA_CHECK( cudaMallocHost(&host_nr_results, 2 * sizeof(indextype)) );
+            const size_t host_X_offset = reserve_host(Xsize * sizeof(Xtype));
+            const size_t host_X_extend_offset = reserve_host(size_t(VECNUM*MAX_EXTEND) * sizeof(Xtype));
+            const size_t host_len_in_offset = reserve_host(lensize * sizeof(lentype));
+            const size_t host_len_out_offset = reserve_host(lensize * sizeof(lentype));
+            const size_t host_lift_len_out_offset = reserve_host(lensize * sizeof(lentype));
+            const size_t host_ips_offset = reserve_host(max_results * sizeof(iptype));
+            const size_t host_indices_offset = reserve_host(max_results * sizeof(indextype));
+            const size_t host_lift_indices_offset = reserve_host(max_lift_results * sizeof(indextype));
+            const size_t host_nr_results_offset = reserve_host(2 * sizeof(indextype));
+
+            host_offset = align_up(host_offset);
+            CUDA_CHECK( cudaMallocHost(&host_alloc, host_offset) );
+            char* host_base = static_cast<char*>(host_alloc);
+            host_X = reinterpret_cast<Xtype*>(host_base + host_X_offset);
+            host_X_extend = reinterpret_cast<Xtype*>(host_base + host_X_extend_offset);
+            host_len_in = reinterpret_cast<lentype*>(host_base + host_len_in_offset);
+            host_len_out = reinterpret_cast<lentype*>(host_base + host_len_out_offset);
+            host_lift_len_out = reinterpret_cast<lentype*>(host_base + host_lift_len_out_offset);
+            host_ips = reinterpret_cast<iptype*>(host_base + host_ips_offset);
+            host_indices = reinterpret_cast<indextype*>(host_base + host_indices_offset);
+            host_lift_indices = reinterpret_cast<indextype*>(host_base + host_lift_indices_offset);
+            host_nr_results = reinterpret_cast<indextype*>(host_base + host_nr_results_offset);
 
             host_nr_results[0] = host_nr_results[1] = indextype(0);
 
@@ -1981,16 +2006,9 @@ void GPUStreamGeneral::free() {
             cublasDestroy(handle);
 
             // Free pinned memory
-            CUDA_CHECK( cudaFreeHost( host_X ) );
-            CUDA_CHECK( cudaFreeHost( host_X_extend ) );
-            CUDA_CHECK( cudaFreeHost( host_len_in ) );
-            CUDA_CHECK( cudaFreeHost( host_len_out ) );
-            CUDA_CHECK( cudaFreeHost( host_lift_len_out ) );
-            CUDA_CHECK( cudaFreeHost( host_ips ) );
-            CUDA_CHECK( cudaFreeHost( host_indices ) );
-            CUDA_CHECK( cudaFreeHost( host_lift_indices ) );
-            CUDA_CHECK( cudaFreeHost( host_nr_results ) );
+            CUDA_CHECK( cudaFreeHost( host_alloc ) );
 
+            host_alloc = nullptr;
             host_X = nullptr;
             host_X_extend = nullptr;
             host_len_in = nullptr;

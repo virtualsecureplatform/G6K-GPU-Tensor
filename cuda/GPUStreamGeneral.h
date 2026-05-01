@@ -121,6 +121,7 @@ class GPUStreamGeneral {
         cudaEvent_t stop[2];
 
         // Pinned host memory
+        void* host_alloc;
         Xtype* host_X; // input
         Xtype* host_X_extend; // output
         lentype* host_len_in; // input
