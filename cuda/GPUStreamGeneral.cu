@@ -1377,7 +1377,7 @@ void kernel_bucketing(half* a, half* b, const uint32_t bucketsize, uint32_t* buc
 __shared__ uint32_t tmpwriteidx;
 constexpr int max_results_per_block = 128;
 __shared__ int resultbuffer[2*max_results_per_block];
-__noinline__ __device__ void save_result2(unsigned int cmask, int aid, int bid, int* results)
+__noinline__ __device__ void save_result2(unsigned int cmask, int aid, int bid, int* __restrict__ results)
 {
     int index = atomicAdd_block(&tmpwriteidx,__popc(cmask));
     int i = __ffs( cmask );
@@ -1407,7 +1407,7 @@ __noinline__ __device__ void save_result3(unsigned int ai, int bi)
 template<int VECDIM, bool TRIPLE = false>
 __global__
 __launch_bounds__(256, 1)
-void kernel_triple_sieve(half* a, const half* len, const half* ips, const uint32_t bucketsize, uint32_t* nr_results, int* results)
+void kernel_triple_sieve(half* __restrict__ a, const half* __restrict__ len, const half* __restrict__ ips, const uint32_t bucketsize, uint32_t* __restrict__ nr_results, int* __restrict__ results)
 {
     typedef rowmat_frag_traits<16,16,16,__half> frag_traits;
     typedef row_matrix<VECDIM, frag_traits, true> mat_type;
