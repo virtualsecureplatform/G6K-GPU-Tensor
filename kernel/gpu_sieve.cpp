@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
+#include <utility>
 #include "../cuda/GPUStreamGeneral.h"
 #include <immintrin.h>
 #include <string.h>
@@ -94,6 +95,8 @@ struct Siever::GpuInsertHostProfile
     size_t replace_calls = 0;
     size_t entries_created = 0;
     size_t uid_duplicates = 0;
+    size_t length_rejects = 0;
+    size_t replacements_prepared = 0;
 
     void add(const GpuInsertHostProfile &other)
     {
@@ -108,6 +111,8 @@ struct Siever::GpuInsertHostProfile
         replace_calls += other.replace_calls;
         entries_created += other.entries_created;
         uid_duplicates += other.uid_duplicates;
+        length_rejects += other.length_rejects;
+        replacements_prepared += other.replacements_prepared;
     }
 };
 
@@ -750,7 +755,7 @@ void Siever::gpu_sieve_duplicate_remove( queues &queue, size_t max_results )
 }
 
 template<size_t tuple_size>
-void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector<Entry> &transaction_db ) {
+bool Siever::gpu_sieve_prepare_replacement( const Qtuple<tuple_size> &q, const size_t threads, int64_t &pending_i_index, std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids ) {
     GpuInsertHostProfile *profile = static_cast<GpuInsertHostProfile *>(gpu_insert_profile_tls);
     if (!profile) {
         Entry new_entry;
@@ -760,9 +765,20 @@ void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector
             new_entry.uid = new_uid;
             new_entry.len = q.len;
             recompute_data_for_entry<Recompute::recompute_len | Recompute::consider_otf_lift | Recompute::recompute_otf_helper>(new_entry);
-            transaction_db.push_back( new_entry );
+            if (pending_i_index >= static_cast<int64_t>(threads)
+                && REDUCE_LEN_MARGIN_HALF * new_entry.len < cdb[pending_i_index].len)
+            {
+                transaction_cdb_indices.push_back(size_t(pending_i_index));
+                transaction_db.push_back(std::move(new_entry));
+                pending_i_index -= static_cast<int64_t>(threads);
+            }
+            else
+            {
+                rejected_uids.push_back(new_uid);
+            }
+            return true;
         }
-        return;
+        return false;
     }
 
     Entry new_entry;
@@ -784,27 +800,43 @@ void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector
         profile->recompute_ns += elapsed_ns(start_recompute);
 
         auto start_push = std::chrono::steady_clock::now();
-        transaction_db.push_back( new_entry );
+        if (pending_i_index >= static_cast<int64_t>(threads)
+            && REDUCE_LEN_MARGIN_HALF * new_entry.len < cdb[pending_i_index].len)
+        {
+            transaction_cdb_indices.push_back(size_t(pending_i_index));
+            transaction_db.push_back(std::move(new_entry));
+            pending_i_index -= static_cast<int64_t>(threads);
+            profile->replacements_prepared++;
+        }
+        else
+        {
+            rejected_uids.push_back(new_uid);
+            profile->length_rejects++;
+        }
         profile->push_ns += elapsed_ns(start_push);
+        return true;
     } else {
         profile->uid_insert_ns += elapsed_ns(start_uid_insert);
         profile->uid_duplicates++;
+        return false;
     }
 }
 
-void Siever::gpu_sieve_queue_to_entry( queues &queue, std::vector<Entry> &transaction_db, const size_t max_results )
+size_t Siever::gpu_sieve_queue_to_replacements( queues &queue, const size_t threads, int64_t &pending_i_index, std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids, const size_t max_results)
 {
+    size_t entries_created = 0;
     // triples
     {
         while (!queue.sieve_triples.empty())
         {
             if( queue.sieve_triples.back().len >= 0. )
             {
-                gpu_sieve_delayed_replace<3>( queue.sieve_triples.back(), transaction_db );
+                if (gpu_sieve_prepare_replacement<3>( queue.sieve_triples.back(), threads, pending_i_index, transaction_db, transaction_cdb_indices, rejected_uids ))
+                    entries_created++;
             }
             queue.sieve_triples.pop_back();
-            if( transaction_db.size() >= max_results )
-                return;
+            if( entries_created >= max_results )
+                return entries_created;
         }
     }
 
@@ -815,81 +847,85 @@ void Siever::gpu_sieve_queue_to_entry( queues &queue, std::vector<Entry> &transa
         {
             if( queue.sieve_pairs.back().len >= 0. )
             {
-                gpu_sieve_delayed_replace<2>( queue.sieve_pairs.back(), transaction_db );
+                if (gpu_sieve_prepare_replacement<2>( queue.sieve_pairs.back(), threads, pending_i_index, transaction_db, transaction_cdb_indices, rejected_uids ))
+                    entries_created++;
             }
             queue.sieve_pairs.pop_back();
-            if( transaction_db.size() >= max_results )
-                return;
+            if( entries_created >= max_results )
+                return entries_created;
         }
     }
+    return entries_created;
 }
 
-bool Siever::gpu_sieve_replace_in_db(size_t cdb_index, const Entry &e){
-    CompressedEntry &ce = cdb[cdb_index];
-    if (REDUCE_LEN_MARGIN_HALF * e.len >= ce.len)
-    {
-        uid_hash_table.erase_uid(e.uid);
-        return false;
-    }
-    uid_hash_table.erase_uid(db[ce.i].uid);
-    ce.bucket_center_count = 0;
-    ce.len = e.len;
-    db[ce.i] = e;
-    return true;
-}
+void Siever::gpu_sieve_apply_replacements( std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids ) {
+    for (UidType uid : rejected_uids)
+        uid_hash_table.erase_uid(uid);
 
-void Siever::gpu_sieve_replace( const size_t t_id, const size_t threads, std::vector<Entry> &transaction_db, size_t &min_i_index ) {
-    (void)t_id;
-    int64_t i_index = min_i_index;
-    for(size_t t_index = 0; t_index < transaction_db.size() && i_index >= static_cast<int64_t>(threads); ++t_index)
+    for(size_t t_index = 0; t_index < transaction_db.size(); ++t_index)
     {
-        if( gpu_sieve_replace_in_db( i_index, transaction_db[t_index] ))
-            i_index -= static_cast<int64_t>(threads);
+        CompressedEntry &ce = cdb[transaction_cdb_indices[t_index]];
+        uid_hash_table.erase_uid(db[ce.i].uid);
+        ce.bucket_center_count = 0;
+        ce.len = transaction_db[t_index].len;
+        db[ce.i] = std::move(transaction_db[t_index]);
     }
-    min_i_index = size_t(i_index);    
     transaction_db.clear();
+    transaction_cdb_indices.clear();
+    rejected_uids.clear();
 }
 
 void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queue, size_t max_results ) {
     constexpr size_t transaction_bulk = 4096;
     std::vector<std::vector<Entry>> transaction_db(threads);
+    std::vector<std::vector<size_t>> transaction_cdb_indices(threads);
+    std::vector<std::vector<UidType>> rejected_uids(threads);
     for (auto &tdb : transaction_db)
         tdb.reserve(transaction_bulk);
+    for (auto &indices : transaction_cdb_indices)
+        indices.reserve(transaction_bulk);
+    for (auto &uids : rejected_uids)
+        uids.reserve(transaction_bulk);
     std::vector<size_t> inserted_count(threads, 0);
     std::vector<size_t> min_i_index(threads, db.size());
     const bool profile_enabled = gpu_host_profile_enabled();
     std::vector<GpuInsertHostProfile> profiles(profile_enabled ? threads : 0);
 
-    threadpool.run([this, &t_queue, &transaction_db, &inserted_count, &min_i_index, max_results, profile_enabled, &profiles](int t_id, int threads)
+    threadpool.run([this, &t_queue, &transaction_db, &transaction_cdb_indices, &rejected_uids, &inserted_count, &min_i_index, max_results, profile_enabled, &profiles](int t_id, int threads)
         {
             GpuInsertHostProfile *profile = profile_enabled ? &profiles[t_id] : nullptr;
             gpu_insert_profile_tls = profile;
             min_i_index[t_id] = cdb.size() - 1 - t_id;
             while (inserted_count[t_id] < (max_results / threads))
             {
+                int64_t pending_i_index = min_i_index[t_id];
                 auto start_queue_to_entry = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-                gpu_sieve_queue_to_entry( t_queue[t_id], transaction_db[t_id], transaction_bulk); //max_results/threads);
+                const size_t entries_created = gpu_sieve_queue_to_replacements( t_queue[t_id], threads, pending_i_index, transaction_db[t_id], transaction_cdb_indices[t_id], rejected_uids[t_id], transaction_bulk); //max_results/threads);
                 if (profile) {
                     profile->queue_to_entry_us += elapsed_us(start_queue_to_entry);
                     profile->queue_to_entry_calls++;
-                    profile->entries_created += transaction_db[t_id].size();
+                    profile->entries_created += entries_created;
                 }
-                if (transaction_db[t_id].empty())
+                if (entries_created == 0)
                     break;
                     
                 auto start_replace = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-                gpu_sieve_replace( t_id, threads, transaction_db[t_id], min_i_index[t_id]);
+                gpu_sieve_apply_replacements( transaction_db[t_id], transaction_cdb_indices[t_id], rejected_uids[t_id]);
                 if (profile) {
                     profile->replace_us += elapsed_us(start_replace);
                     profile->replace_calls++;
                 }
-                
-                transaction_db[t_id].clear();
 
+                min_i_index[t_id] = size_t(pending_i_index);
                 inserted_count[t_id] = ( (cdb.size() - 1 - t_id) - min_i_index[t_id] ) / threads;
             }
             t_queue[t_id].sieve_pairs.clear();
             t_queue[t_id].sieve_triples.clear();
+            transaction_db[t_id].clear();
+            transaction_cdb_indices[t_id].clear();
+            for (UidType uid : rejected_uids[t_id])
+                uid_hash_table.erase_uid(uid);
+            rejected_uids[t_id].clear();
             gpu_insert_profile_tls = nullptr;
         }, threads);
 
@@ -909,6 +945,8 @@ void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queu
                   << " replace_calls=" << total.replace_calls
                   << " entries=" << total.entries_created
                   << " uid_dup=" << total.uid_duplicates
+                  << " len_reject=" << total.length_rejects
+                  << " replacements=" << total.replacements_prepared
                   << std::endl;
         std::cerr.copyfmt(std::ios(NULL));
     }

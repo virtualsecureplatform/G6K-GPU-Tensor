@@ -1257,10 +1257,9 @@ private:
     template<size_t tuple_size> inline std::array<ZT,MAX_SIEVING_DIM> compute_x( const Qtuple<tuple_size> &q);
     void gpu_sieve_lift( queues &queue);
     void gpu_sieve_duplicate_remove( queues &queue, size_t max_results);
-    template<size_t tuple_size> void gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector<Entry> &transaction_db );
-    void gpu_sieve_queue_to_entry( queues &queue, std::vector<Entry> &transaction_db, const size_t max_results);
-    bool gpu_sieve_replace_in_db(size_t cdb_index, const Entry &e);
-    void gpu_sieve_replace( const size_t t_id, const size_t threads, std::vector<Entry> &transaction_db, size_t &min_i_index );
+    template<size_t tuple_size> bool gpu_sieve_prepare_replacement( const Qtuple<tuple_size> &q, const size_t threads, int64_t &pending_i_index, std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids );
+    size_t gpu_sieve_queue_to_replacements( queues &queue, const size_t threads, int64_t &pending_i_index, std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids, const size_t max_results);
+    void gpu_sieve_apply_replacements( std::vector<Entry> &transaction_db, std::vector<size_t> &transaction_cdb_indices, std::vector<UidType> &rejected_uids );
     void gpu_insert_queue( const size_t threads, std::vector<queues> &t_queue, size_t max_results );
     void gpu_recompute_task( const size_t A, const size_t t_id, const size_t threads, const size_t chunk_size);
     void gpu_recompute( const size_t A, const size_t threads );
