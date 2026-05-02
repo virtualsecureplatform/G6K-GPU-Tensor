@@ -263,6 +263,7 @@ void Siever::gpu_bucketing( const size_t A, size_t chunk_size, const std::vector
             buckets[0].ips[i] = dirs[rng()%2];
 
         buckets[0].b_db_index = b_start2;
+        buckets[0].b_local_index = 0;
         // too large value to prevent triples (saves computing the ips)
         buckets[0].b_len = 100.;
         return;
