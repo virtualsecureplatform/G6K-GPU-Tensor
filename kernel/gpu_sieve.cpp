@@ -22,9 +22,21 @@ uint64_t elapsed_us(TimePoint start)
         std::chrono::steady_clock::now() - start).count();
 }
 
+template <typename TimePoint>
+uint64_t elapsed_ns(TimePoint start)
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - start).count();
+}
+
 double ms(uint64_t us)
 {
     return double(us) / 1000.0;
+}
+
+double ns_to_ms(uint64_t ns)
+{
+    return double(ns) / 1000000.0;
 }
 
 }
@@ -72,20 +84,36 @@ struct Siever::GpuProcessingHostProfile
 struct Siever::GpuInsertHostProfile
 {
     uint64_t queue_to_entry_us = 0;
+    uint64_t compute_x_ns = 0;
+    uint64_t uid_compute_ns = 0;
+    uint64_t uid_insert_ns = 0;
+    uint64_t recompute_ns = 0;
+    uint64_t push_ns = 0;
     uint64_t replace_us = 0;
     size_t queue_to_entry_calls = 0;
     size_t replace_calls = 0;
     size_t entries_created = 0;
+    size_t uid_duplicates = 0;
 
     void add(const GpuInsertHostProfile &other)
     {
         queue_to_entry_us += other.queue_to_entry_us;
+        compute_x_ns += other.compute_x_ns;
+        uid_compute_ns += other.uid_compute_ns;
+        uid_insert_ns += other.uid_insert_ns;
+        recompute_ns += other.recompute_ns;
+        push_ns += other.push_ns;
         replace_us += other.replace_us;
         queue_to_entry_calls += other.queue_to_entry_calls;
         replace_calls += other.replace_calls;
         entries_created += other.entries_created;
+        uid_duplicates += other.uid_duplicates;
     }
 };
+
+namespace {
+thread_local void *gpu_insert_profile_tls = nullptr;
+}
 
 
 size_t automaxbuckets(size_t max_nr_buckets, size_t dbsize)
@@ -723,14 +751,44 @@ void Siever::gpu_sieve_duplicate_remove( queues &queue, size_t max_results )
 
 template<size_t tuple_size>
 void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector<Entry> &transaction_db ) {
+    GpuInsertHostProfile *profile = static_cast<GpuInsertHostProfile *>(gpu_insert_profile_tls);
+    if (!profile) {
+        Entry new_entry;
+        new_entry.x = compute_x<tuple_size>( q );
+        UidType new_uid = uid_hash_table.compute_uid(new_entry.x);
+        if( uid_hash_table.insert_uid(new_uid) ) {
+            new_entry.uid = new_uid;
+            new_entry.len = q.len;
+            recompute_data_for_entry<Recompute::recompute_len | Recompute::consider_otf_lift | Recompute::recompute_otf_helper>(new_entry);
+            transaction_db.push_back( new_entry );
+        }
+        return;
+    }
+
     Entry new_entry;
+    auto start_compute_x = std::chrono::steady_clock::now();
     new_entry.x = compute_x<tuple_size>( q ); 
+    profile->compute_x_ns += elapsed_ns(start_compute_x);
+
+    auto start_uid_compute = std::chrono::steady_clock::now();
     UidType new_uid = uid_hash_table.compute_uid(new_entry.x);
+    profile->uid_compute_ns += elapsed_ns(start_uid_compute);
+
+    auto start_uid_insert = std::chrono::steady_clock::now();
     if( uid_hash_table.insert_uid(new_uid) ) {
+        profile->uid_insert_ns += elapsed_ns(start_uid_insert);
         new_entry.uid = new_uid;
         new_entry.len = q.len;
+        auto start_recompute = std::chrono::steady_clock::now();
         recompute_data_for_entry<Recompute::recompute_len | Recompute::consider_otf_lift | Recompute::recompute_otf_helper>(new_entry); 
+        profile->recompute_ns += elapsed_ns(start_recompute);
+
+        auto start_push = std::chrono::steady_clock::now();
         transaction_db.push_back( new_entry );
+        profile->push_ns += elapsed_ns(start_push);
+    } else {
+        profile->uid_insert_ns += elapsed_ns(start_uid_insert);
+        profile->uid_duplicates++;
     }
 }
 
@@ -805,6 +863,7 @@ void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queu
     threadpool.run([this, &t_queue, &transaction_db, &inserted_count, &min_i_index, max_results, profile_enabled, &profiles](int t_id, int threads)
         {
             GpuInsertHostProfile *profile = profile_enabled ? &profiles[t_id] : nullptr;
+            gpu_insert_profile_tls = profile;
             min_i_index[t_id] = cdb.size() - 1 - t_id;
             while (inserted_count[t_id] < (max_results / threads))
             {
@@ -831,6 +890,7 @@ void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queu
             }
             t_queue[t_id].sieve_pairs.clear();
             t_queue[t_id].sieve_triples.clear();
+            gpu_insert_profile_tls = nullptr;
         }, threads);
 
     if (profile_enabled) {
@@ -839,10 +899,16 @@ void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queu
             total.add(profile);
         std::cerr << std::fixed << std::setprecision(3)
                   << "GPU host Qi: queue_to_entry=" << ms(total.queue_to_entry_us)
+                  << "ms compute_x=" << ns_to_ms(total.compute_x_ns)
+                  << "ms uid_compute=" << ns_to_ms(total.uid_compute_ns)
+                  << "ms uid_insert=" << ns_to_ms(total.uid_insert_ns)
+                  << "ms recompute=" << ns_to_ms(total.recompute_ns)
+                  << "ms push=" << ns_to_ms(total.push_ns)
                   << "ms replace=" << ms(total.replace_us)
                   << "ms q2e_calls=" << total.queue_to_entry_calls
                   << " replace_calls=" << total.replace_calls
                   << " entries=" << total.entries_created
+                  << " uid_dup=" << total.uid_duplicates
                   << std::endl;
         std::cerr.copyfmt(std::ios(NULL));
     }
