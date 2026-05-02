@@ -216,14 +216,13 @@ __global__ void kernel_X_to_Xhalf( const int16_t* X, half* Xhalf, const uint32_t
 }
 
 // Call with vecs/VECS_PER_BLOCK blocks with 32 threads each
+template<uint32_t ROWS_PER_BLOCK>
 __global__ void kernel_float_to_half( const float* in, half* out, const uint32_t VECDIM ) {
-    const uint32_t ROWS_PER_BLOCK = 32;
-
     float4* Xptr = ((float4*)(in + ROWS_PER_BLOCK * VECDIM * blockIdx.x)) + threadIdx.x;
     const float4* Xptr_end = (float4*)(in + ROWS_PER_BLOCK * VECDIM * (blockIdx.x+1));
     float2* Xhalfptr = ((float2*)(out + ROWS_PER_BLOCK * VECDIM * blockIdx.x)) + threadIdx.x;
 
-    for( ; Xptr < Xptr_end; Xptr += WARP_SIZE, Xhalfptr += WARP_SIZE ) {
+    for( ; Xptr < Xptr_end; Xptr += blockDim.x, Xhalfptr += blockDim.x ) {
         float regs[4];
         half regs_out[4];
         *reinterpret_cast<float4*>(regs) = *Xptr;
@@ -2357,10 +2356,16 @@ inline void GPUStreamGeneral::X_to_Xfloat_normalize( const size_t bucketsize ) {
 
 inline void GPUStreamGeneral::float_to_half( const float* dev_in, half* dev_out, const size_t bucketsize ) {
     // kernel threads/blocks
-    
-    const size_t blocks = bucketsize / 32;
-    const size_t threads = 32;
-    kernel_float_to_half<<<blocks, threads, 0, stream>>>( dev_in, dev_out, VECDIM );
+
+    if( bucketsize % 128 == 0 ) {
+        const size_t blocks = bucketsize / 128;
+        const size_t threads = 128;
+        kernel_float_to_half<128><<<blocks, threads, 0, stream>>>( dev_in, dev_out, VECDIM );
+    } else {
+        const size_t blocks = bucketsize / 32;
+        const size_t threads = 32;
+        kernel_float_to_half<32><<<blocks, threads, 0, stream>>>( dev_in, dev_out, VECDIM );
+    }
 }
 
 inline void GPUStreamGeneral::prepare_len_and_ips( float lenbound, float b_len, const size_t bucketsize ) {
