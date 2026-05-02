@@ -179,6 +179,9 @@ class GPUStreamGeneral {
         cudaEvent_t D2H[2];
         int d2h_process_slot;
         int d2h_enqueue_slot;
+        size_t host_alloc_size;
+        size_t dev_alloc_size;
+        size_t global_alloc_size;
     public:
         GPUStreamGeneral(const int device, const size_t n, const std::string gpu_bucketer, const bool gpu_triple, const size_t multi_bucket, const size_t max_nr_buckets, const bool global, std::vector<Entry> &db, std::vector<CompressedEntry> &cdb, const size_t dual_hash_vecs=64);
         void malloc( global_dev_ptrs &dev_ptrs );

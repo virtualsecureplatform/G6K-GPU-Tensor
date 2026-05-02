@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <immintrin.h>
 #include <iterator>
+#include <mutex>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -37,6 +39,131 @@ using namespace nvcuda;
 #endif
 
 #define VECNUM GPUVECNUM
+
+namespace {
+
+bool gpu_alloc_cache_enabled()
+{
+    static const bool enabled = std::getenv("G6K_GPU_ALLOC_CACHE_DISABLE") == nullptr;
+    return enabled;
+}
+
+struct AllocationCache {
+    struct HostBlock {
+        void* ptr;
+        size_t bytes;
+    };
+
+    struct DeviceBlock {
+        void* ptr;
+        size_t bytes;
+        int device;
+    };
+
+    std::mutex mutex;
+    std::vector<HostBlock> host_blocks;
+    std::vector<DeviceBlock> device_blocks;
+
+    ~AllocationCache()
+    {
+        for( auto &block : host_blocks )
+            cudaFreeHost(block.ptr);
+        for( auto &block : device_blocks ) {
+            cudaSetDevice(block.device);
+            cudaFree(block.ptr);
+        }
+    }
+};
+
+AllocationCache& allocation_cache()
+{
+    static AllocationCache cache;
+    return cache;
+}
+
+void* acquire_cached_host_alloc(size_t& bytes)
+{
+    if( gpu_alloc_cache_enabled() ) {
+        auto &cache = allocation_cache();
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        size_t best = cache.host_blocks.size();
+        for( size_t i = 0; i < cache.host_blocks.size(); i++ ) {
+            if( cache.host_blocks[i].bytes >= bytes &&
+                (best == cache.host_blocks.size() || cache.host_blocks[i].bytes < cache.host_blocks[best].bytes) ) {
+                best = i;
+            }
+        }
+        if( best != cache.host_blocks.size() ) {
+            void* ptr = cache.host_blocks[best].ptr;
+            bytes = cache.host_blocks[best].bytes;
+            cache.host_blocks.erase(cache.host_blocks.begin() + best);
+            return ptr;
+        }
+    }
+
+    void* ptr = nullptr;
+    CUDA_CHECK( cudaMallocHost(&ptr, bytes) );
+    return ptr;
+}
+
+void release_cached_host_alloc(void* ptr, size_t bytes)
+{
+    if( ptr == nullptr )
+        return;
+
+    if( not gpu_alloc_cache_enabled() ) {
+        CUDA_CHECK( cudaFreeHost(ptr) );
+        return;
+    }
+
+    auto &cache = allocation_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.host_blocks.push_back({ptr, bytes});
+}
+
+void* acquire_cached_device_alloc(int device, size_t& bytes)
+{
+    CUDA_CHECK( cudaSetDevice(device) );
+    if( gpu_alloc_cache_enabled() ) {
+        auto &cache = allocation_cache();
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        size_t best = cache.device_blocks.size();
+        for( size_t i = 0; i < cache.device_blocks.size(); i++ ) {
+            if( cache.device_blocks[i].device == device && cache.device_blocks[i].bytes >= bytes &&
+                (best == cache.device_blocks.size() || cache.device_blocks[i].bytes < cache.device_blocks[best].bytes) ) {
+                best = i;
+            }
+        }
+        if( best != cache.device_blocks.size() ) {
+            void* ptr = cache.device_blocks[best].ptr;
+            bytes = cache.device_blocks[best].bytes;
+            cache.device_blocks.erase(cache.device_blocks.begin() + best);
+            return ptr;
+        }
+    }
+
+    void* ptr = nullptr;
+    CUDA_CHECK( cudaMalloc(&ptr, bytes) );
+    return ptr;
+}
+
+void release_cached_device_alloc(int device, void* ptr, size_t bytes)
+{
+    if( ptr == nullptr )
+        return;
+
+    CUDA_CHECK( cudaSetDevice(device) );
+    if( not gpu_alloc_cache_enabled() ) {
+        CUDA_CHECK( cudaFree(ptr) );
+        return;
+    }
+
+    auto &cache = allocation_cache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.device_blocks.push_back({ptr, bytes, device});
+}
+
+}
 
 static_assert(sizeof(packed_sieve_result) == 2 * sizeof(int) + sizeof(lentype),
               "packed_sieve_result must stay densely packed for D2H copies");
@@ -1883,6 +2010,9 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             host_alloc = nullptr;
             dev_alloc = nullptr;
             global_alloc = nullptr;
+            host_alloc_size = 0;
+            dev_alloc_size = 0;
+            global_alloc_size = 0;
             host_results = nullptr;
             host_lift_results = nullptr;
             dev_results = nullptr;
@@ -1972,7 +2102,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             };
 
             host_offset = align_up(host_offset);
-            CUDA_CHECK( cudaMallocHost(&host_alloc, host_offset) );
+            host_alloc_size = host_offset;
+            host_alloc = acquire_cached_host_alloc(host_alloc_size);
             char* host_base = static_cast<char*>(host_alloc);
             host_X = reinterpret_cast<Xtype*>(host_base + host_X_offset);
             host_X_extend = reinterpret_cast<Xtype*>(host_base + host_X_extend_offset);
@@ -2023,7 +2154,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             const size_t dev_nr_results_offset = reserve_dev(2 * sizeof(indextype));
 
             dev_offset = align_up(dev_offset);
-            CUDA_CHECK( cudaMalloc(&dev_alloc, dev_offset) );
+            dev_alloc_size = dev_offset;
+            dev_alloc = acquire_cached_device_alloc(device, dev_alloc_size);
             char* dev_base = static_cast<char*>(dev_alloc);
             dev_X = reinterpret_cast<Xtype*>(dev_base + dev_X_offset);
             dev_X_half = reinterpret_cast<half*>(dev_base + dev_X_half_offset);
@@ -2066,7 +2198,8 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
                 const size_t dev_uid_coeffs_offset = reserve_global(uid_size * sizeof(UidType));
 
                 global_offset = align_up(global_offset);
-                CUDA_CHECK( cudaMalloc(&global_alloc, global_offset) );
+                global_alloc_size = global_offset;
+                global_alloc = acquire_cached_device_alloc(device, global_alloc_size);
                 char* global_base = static_cast<char*>(global_alloc);
                 dev_B = reinterpret_cast<half*>(global_base + dev_B_offset);
                 dev_B_float = reinterpret_cast<float*>(global_base + dev_B_float_offset);
@@ -2092,6 +2225,9 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
 }
 
 void GPUStreamGeneral::free() {
+            CUDA_CHECK( cudaSetDevice( device ) );
+            CUDA_CHECK( cudaStreamSynchronize( stream ) );
+
             // Destory events and stream
             CUDA_CHECK( cudaEventDestroy( H2D ) );
             for( int i = 0; i < 2; i++ )
@@ -2100,9 +2236,10 @@ void GPUStreamGeneral::free() {
             cublasDestroy(handle);
 
             // Free pinned memory
-            CUDA_CHECK( cudaFreeHost( host_alloc ) );
+            release_cached_host_alloc(host_alloc, host_alloc_size);
 
             host_alloc = nullptr;
+            host_alloc_size = 0;
             host_X = nullptr;
             host_X_extend = nullptr;
             host_len_in = nullptr;
@@ -2120,9 +2257,10 @@ void GPUStreamGeneral::free() {
                 host_nr_results_slots[i] = nullptr;
             }
 
-            CUDA_CHECK( cudaFree( dev_alloc ) );
+            release_cached_device_alloc(device, dev_alloc, dev_alloc_size);
             
             dev_alloc = nullptr;
+            dev_alloc_size = 0;
             dev_X = nullptr;
             dev_X_half = nullptr;
             dev_X_float = nullptr;
@@ -2141,10 +2279,12 @@ void GPUStreamGeneral::free() {
             dev_nr_results = nullptr;
 
             if( global ) {
-                CUDA_CHECK( cudaFree( global_alloc ) );
+                CUDA_CHECK( cudaDeviceSynchronize() );
+                release_cached_device_alloc(device, global_alloc, global_alloc_size);
             }
 
             global_alloc = nullptr;
+            global_alloc_size = 0;
             dev_B = nullptr;
             dev_B_float = nullptr;
             dev_mu_L = nullptr;
