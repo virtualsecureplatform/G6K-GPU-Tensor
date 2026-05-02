@@ -793,7 +793,7 @@ void Siever::gpu_sieve_replace( const size_t t_id, const size_t threads, std::ve
 }
 
 void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queue, size_t max_results ) {
-    const size_t transaction_bulk = 4096;
+    constexpr size_t transaction_bulk = 4096;
     std::vector<std::vector<Entry>> transaction_db(threads);
     for (auto &tdb : transaction_db)
         tdb.reserve(transaction_bulk);
