@@ -1,8 +1,91 @@
 #include <unistd.h>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include "../cuda/GPUStreamGeneral.h"
 #include <immintrin.h>
 #include <string.h>
+
+namespace {
+
+bool gpu_host_profile_enabled()
+{
+    static const bool enabled = std::getenv("G6K_GPU_PROFILE_HOST") != nullptr;
+    return enabled;
+}
+
+template <typename TimePoint>
+uint64_t elapsed_us(TimePoint start)
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - start).count();
+}
+
+double ms(uint64_t us)
+{
+    return double(us) / 1000.0;
+}
+
+}
+
+struct Siever::GpuProcessingHostProfile
+{
+    uint64_t send_us = 0;
+    uint64_t launch_us = 0;
+    uint64_t receive_us = 0;
+    uint64_t uid_pairs_us = 0;
+    uint64_t uid_triples_us = 0;
+    uint64_t lift_us = 0;
+    uint64_t final_receive_us = 0;
+    uint64_t final_lift_us = 0;
+    size_t buckets = 0;
+    size_t skipped_buckets = 0;
+    size_t receive_calls = 0;
+    size_t final_receive_calls = 0;
+    size_t pairs_received = 0;
+    size_t triples_received = 0;
+    size_t pairs_duplicates = 0;
+    size_t triples_duplicates = 0;
+
+    void add(const GpuProcessingHostProfile &other)
+    {
+        send_us += other.send_us;
+        launch_us += other.launch_us;
+        receive_us += other.receive_us;
+        uid_pairs_us += other.uid_pairs_us;
+        uid_triples_us += other.uid_triples_us;
+        lift_us += other.lift_us;
+        final_receive_us += other.final_receive_us;
+        final_lift_us += other.final_lift_us;
+        buckets += other.buckets;
+        skipped_buckets += other.skipped_buckets;
+        receive_calls += other.receive_calls;
+        final_receive_calls += other.final_receive_calls;
+        pairs_received += other.pairs_received;
+        triples_received += other.triples_received;
+        pairs_duplicates += other.pairs_duplicates;
+        triples_duplicates += other.triples_duplicates;
+    }
+};
+
+struct Siever::GpuInsertHostProfile
+{
+    uint64_t queue_to_entry_us = 0;
+    uint64_t replace_us = 0;
+    size_t queue_to_entry_calls = 0;
+    size_t replace_calls = 0;
+    size_t entries_created = 0;
+
+    void add(const GpuInsertHostProfile &other)
+    {
+        queue_to_entry_us += other.queue_to_entry_us;
+        replace_us += other.replace_us;
+        queue_to_entry_calls += other.queue_to_entry_calls;
+        replace_calls += other.replace_calls;
+        entries_created += other.entries_created;
+    }
+};
 
 
 size_t automaxbuckets(size_t max_nr_buckets, size_t dbsize)
@@ -333,7 +416,7 @@ void Siever::gpu_bucketing( const size_t A, size_t chunk_size, const std::vector
 
 // -------------------------------- PROCESSING ------------------------------------ //
 
-void Siever::gpu_processing_task( const size_t t_id, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results, std::atomic_size_t &next_bucket ) {
+void Siever::gpu_processing_task( const size_t t_id, const float lenbound, const std::vector<triple_bucket> &buckets, queues &t_queue, size_t max_results, std::atomic_size_t &next_bucket, GpuProcessingHostProfile *profile ) {
     const size_t nr_buckets = buckets.size();
     const size_t streams = gpu_general[0].size();
 
@@ -346,55 +429,130 @@ void Siever::gpu_processing_task( const size_t t_id, const float lenbound, const
         size_t b = next_bucket.fetch_add(1, std::memory_order_relaxed);
         if( b >= nr_buckets )
             break;
-        if( buckets[b].size < 128 )
+        if( buckets[b].size < 128 ) {
+            if (profile)
+                profile->skipped_buckets++;
             continue;
+        }
         did_work[s%streams] = true;
+        if (profile)
+            profile->buckets++;
+
+        auto start_send = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         gpu_general[t_id][s%streams]->P_send_data( buckets[b], lenbound, params.dh_bucket_ratio );
+        if (profile)
+            profile->send_us += elapsed_us(start_send);
+
+        auto start_launch = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         gpu_general[t_id][s%streams]->P_launch_kernel( dual_hashes.get_dh_bound() );
+        if (profile)
+            profile->launch_us += elapsed_us(start_launch);
 
         size_t queue_pairs = t_queue.sieve_pairs.size();
         size_t queue_triples = t_queue.sieve_triples.size();
+        auto start_receive = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         gpu_general[t_id][s%streams]->P_receive_data( t_queue, false );
+        if (profile) {
+            profile->receive_us += elapsed_us(start_receive);
+            profile->receive_calls++;
+            profile->pairs_received += t_queue.sieve_pairs.size() - queue_pairs;
+            profile->triples_received += t_queue.sieve_triples.size() - queue_triples;
+        }
+
+        size_t pairs_duplicates = 0;
+        auto start_uid_pairs = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         for (size_t i = queue_pairs; i < t_queue.sieve_pairs.size(); ++i)
         {
             UidType new_uid = compute_uid<2>( t_queue.sieve_pairs[i] );
             if(! uid_hash_table.check_uid_unsafe(new_uid) )
                 continue;
+            pairs_duplicates++;
             std::swap(t_queue.sieve_pairs[i], t_queue.sieve_pairs.back());
             t_queue.sieve_pairs.pop_back();
             --i;
         }
+        if (profile) {
+            profile->uid_pairs_us += elapsed_us(start_uid_pairs);
+            profile->pairs_duplicates += pairs_duplicates;
+        }
+
+        size_t triples_duplicates = 0;
+        auto start_uid_triples = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         for (size_t i = queue_triples; i < t_queue.sieve_triples.size(); ++i)
         {
             UidType new_uid = compute_uid<3>( t_queue.sieve_triples[i] );
             if(! uid_hash_table.check_uid_unsafe(new_uid) )
                 continue;
+            triples_duplicates++;
             std::swap(t_queue.sieve_triples[i], t_queue.sieve_triples.back());
             t_queue.sieve_triples.pop_back();
             --i;
         }
+        if (profile) {
+            profile->uid_triples_us += elapsed_us(start_uid_triples);
+            profile->triples_duplicates += triples_duplicates;
+        }
 
-        if (params.otf_lift)
+        if (params.otf_lift) {
+            auto start_lift = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             gpu_sieve_lift( t_queue );
+            if (profile)
+                profile->lift_us += elapsed_us(start_lift);
+        }
         if (t_queue.sieve_pairs.size() + t_queue.sieve_triples.size() > max_results)
             break;
     }
 
     for( size_t i = 0; i < streams; i++ ) {
-        if( did_work[i] )
+        if( did_work[i] ) {
+            auto start_receive = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             gpu_general[t_id][i]->P_receive_data( t_queue, true );
+            if (profile) {
+                profile->final_receive_us += elapsed_us(start_receive);
+                profile->final_receive_calls++;
+            }
+        }
     }
-    if (params.otf_lift)
-	gpu_sieve_lift( t_queue ); 
+    if (params.otf_lift) {
+        auto start_lift = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        gpu_sieve_lift( t_queue );
+        if (profile)
+            profile->final_lift_us += elapsed_us(start_lift);
+    }
 }
 
 void Siever::gpu_processing( const size_t threads, const float lenbound, const std::vector<triple_bucket> &buckets, std::vector<queues> &t_queue, size_t max_results) 
 {
     std::atomic_size_t next_bucket(0);
-    threadpool.run([this, lenbound, &buckets, &t_queue, max_results, &next_bucket](int t_id, int threads)
+    const bool profile_enabled = gpu_host_profile_enabled();
+    std::vector<GpuProcessingHostProfile> profiles(profile_enabled ? threads : 0);
+    threadpool.run([this, lenbound, &buckets, &t_queue, max_results, &next_bucket, profile_enabled, &profiles](int t_id, int threads)
         {
-            gpu_processing_task( t_id, lenbound, buckets, t_queue[t_id], max_results / threads, next_bucket);
+            gpu_processing_task( t_id, lenbound, buckets, t_queue[t_id], max_results / threads, next_bucket,
+                                 profile_enabled ? &profiles[t_id] : nullptr);
         }, threads);
+
+    if (profile_enabled) {
+        GpuProcessingHostProfile total;
+        for (const auto &profile : profiles)
+            total.add(profile);
+        std::cerr << std::fixed << std::setprecision(3)
+                  << "GPU host P: buckets=" << total.buckets
+                  << " skipped=" << total.skipped_buckets
+                  << " send=" << ms(total.send_us)
+                  << "ms launch=" << ms(total.launch_us)
+                  << "ms recv=" << ms(total.receive_us)
+                  << "ms final_recv=" << ms(total.final_receive_us)
+                  << "ms uid2=" << ms(total.uid_pairs_us)
+                  << "ms uid3=" << ms(total.uid_triples_us)
+                  << "ms lift=" << ms(total.lift_us + total.final_lift_us)
+                  << "ms q2+=" << total.pairs_received
+                  << " dup2=" << total.pairs_duplicates
+                  << " q3+=" << total.triples_received
+                  << " dup3=" << total.triples_duplicates
+                  << std::endl;
+        std::cerr.copyfmt(std::ios(NULL));
+    }
 }
 
 // -------------------------------- RECOMPUTE ------------------------------------ //
@@ -564,7 +722,7 @@ void Siever::gpu_sieve_duplicate_remove( queues &queue, size_t max_results )
 }
 
 template<size_t tuple_size>
-void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::deque<Entry> &transaction_db ) {
+void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::vector<Entry> &transaction_db ) {
     Entry new_entry;
     new_entry.x = compute_x<tuple_size>( q ); 
     UidType new_uid = uid_hash_table.compute_uid(new_entry.x);
@@ -576,7 +734,7 @@ void Siever::gpu_sieve_delayed_replace( const Qtuple<tuple_size> &q, std::deque<
     }
 }
 
-void Siever::gpu_sieve_queue_to_entry( queues &queue, std::deque<Entry> &transaction_db, const size_t max_results ) 
+void Siever::gpu_sieve_queue_to_entry( queues &queue, std::vector<Entry> &transaction_db, const size_t max_results )
 {
     // triples
     {
@@ -622,34 +780,50 @@ bool Siever::gpu_sieve_replace_in_db(size_t cdb_index, const Entry &e){
     return true;
 }
 
-void Siever::gpu_sieve_replace( const size_t t_id, const size_t threads, std::deque<Entry> &transaction_db, size_t &min_i_index ) {
+void Siever::gpu_sieve_replace( const size_t t_id, const size_t threads, std::vector<Entry> &transaction_db, size_t &min_i_index ) {
+    (void)t_id;
     int64_t i_index = min_i_index;
-    int64_t t_index = 0;
-    for(; !transaction_db.empty() && i_index >= threads; ++t_index)
+    for(size_t t_index = 0; t_index < transaction_db.size() && i_index >= static_cast<int64_t>(threads); ++t_index)
     {
-        if( gpu_sieve_replace_in_db( i_index, transaction_db.front() ))
-            i_index -= threads;
-        transaction_db.pop_front();
+        if( gpu_sieve_replace_in_db( i_index, transaction_db[t_index] ))
+            i_index -= static_cast<int64_t>(threads);
     }
     min_i_index = size_t(i_index);    
     transaction_db.clear();
 }
 
 void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queue, size_t max_results ) {
-    std::vector<std::deque<Entry>> transaction_db(threads);
+    const size_t transaction_bulk = 4096;
+    std::vector<std::vector<Entry>> transaction_db(threads);
+    for (auto &tdb : transaction_db)
+        tdb.reserve(transaction_bulk);
     std::vector<size_t> inserted_count(threads, 0);
     std::vector<size_t> min_i_index(threads, db.size());
+    const bool profile_enabled = gpu_host_profile_enabled();
+    std::vector<GpuInsertHostProfile> profiles(profile_enabled ? threads : 0);
 
-    threadpool.run([this, &t_queue, &transaction_db, &inserted_count, &min_i_index, max_results](int t_id, int threads)
+    threadpool.run([this, &t_queue, &transaction_db, &inserted_count, &min_i_index, max_results, profile_enabled, &profiles](int t_id, int threads)
         {
+            GpuInsertHostProfile *profile = profile_enabled ? &profiles[t_id] : nullptr;
             min_i_index[t_id] = cdb.size() - 1 - t_id;
             while (inserted_count[t_id] < (max_results / threads))
             {
-                gpu_sieve_queue_to_entry( t_queue[t_id], transaction_db[t_id], 4096); //max_results/threads);
+                auto start_queue_to_entry = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                gpu_sieve_queue_to_entry( t_queue[t_id], transaction_db[t_id], transaction_bulk); //max_results/threads);
+                if (profile) {
+                    profile->queue_to_entry_us += elapsed_us(start_queue_to_entry);
+                    profile->queue_to_entry_calls++;
+                    profile->entries_created += transaction_db[t_id].size();
+                }
                 if (transaction_db[t_id].empty())
                     break;
                     
+                auto start_replace = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                 gpu_sieve_replace( t_id, threads, transaction_db[t_id], min_i_index[t_id]);
+                if (profile) {
+                    profile->replace_us += elapsed_us(start_replace);
+                    profile->replace_calls++;
+                }
                 
                 transaction_db[t_id].clear();
 
@@ -658,6 +832,20 @@ void Siever::gpu_insert_queue( const size_t threads, std::vector<queues> &t_queu
             t_queue[t_id].sieve_pairs.clear();
             t_queue[t_id].sieve_triples.clear();
         }, threads);
+
+    if (profile_enabled) {
+        GpuInsertHostProfile total;
+        for (const auto &profile : profiles)
+            total.add(profile);
+        std::cerr << std::fixed << std::setprecision(3)
+                  << "GPU host Qi: queue_to_entry=" << ms(total.queue_to_entry_us)
+                  << "ms replace=" << ms(total.replace_us)
+                  << "ms q2e_calls=" << total.queue_to_entry_calls
+                  << " replace_calls=" << total.replace_calls
+                  << " entries=" << total.entries_created
+                  << std::endl;
+        std::cerr.copyfmt(std::ios(NULL));
+    }
 
     gpu_stats_nonduplicates = 0;
     for (auto& tdbi : transaction_db)
