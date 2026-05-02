@@ -2029,6 +2029,8 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
                 host_lift_results_slots[i] = nullptr;
                 host_indices_slots[i] = nullptr;
                 host_nr_results_slots[i] = nullptr;
+                result_capacity_slots[i] = 0;
+                lift_result_capacity_slots[i] = 0;
             }
             CUDA_CHECK( cudaSetDevice( _device ) );
         }
@@ -2307,6 +2309,8 @@ void GPUStreamGeneral::reset_results() {
     cdb_range_prev = { 0,0 };
     d2h_process_slot = 0;
     d2h_enqueue_slot = 1;
+    result_capacity_slots[0] = result_capacity_slots[1] = 0;
+    lift_result_capacity_slots[0] = lift_result_capacity_slots[1] = 0;
     if( host_alloc != nullptr ) {
         host_len_out = host_len_out_slots[0];
         host_results = host_results_slots[0];
@@ -3083,13 +3087,16 @@ void GPUStreamGeneral::P_launch_kernel( uint32_t dh_bound ) {
 
 void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
             if( !onlyprocess ) {
-                const size_t results = std::min(last_result_capacity, size_t(VECNUM));
                 const int enqueue_slot = d2h_enqueue_slot;
+                const size_t results = std::min(last_result_capacity, size_t(VECNUM));
+                result_capacity_slots[enqueue_slot] = results;
 
                 CUDA_CHECK( cudaMemcpyAsync(host_results_slots[enqueue_slot], dev_results, results * sizeof(packed_sieve_result), cudaMemcpyDeviceToHost, stream) );
 
+                lift_result_capacity_slots[enqueue_slot] = 0;
                 if( lift and last_lift_result_capacity > 0 ) {
                     const size_t lift_results = std::min(last_lift_result_capacity, size_t(VECNUM));
+                    lift_result_capacity_slots[enqueue_slot] = lift_results;
                     CUDA_CHECK( cudaMemcpyAsync(host_lift_results_slots[enqueue_slot], dev_lift_results, lift_results * sizeof(packed_sieve_result), cudaMemcpyDeviceToHost, stream) );
                 }
 
@@ -3122,9 +3129,8 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
                 const indextype* bucket_indices = onlyprocess ? curr_bucket->indices : prev_bucket->indices;
                 const iptype* bucket_ips = onlyprocess ? curr_bucket->ips : prev_bucket->ips;
                 const indextype b_index = onlyprocess ? curr_bucket->b_db_index : prev_bucket->b_db_index;
-                const auto b_size = onlyprocess ? curr_bucket->size : prev_bucket->size;
 
-                const uint32_t result_limit = uint32_t(std::min(last_result_capacity, size_t(max_results)));
+                const uint32_t result_limit = uint32_t(std::min(result_capacity_slots[process_slot], size_t(max_results)));
                 if( host_nr_results[0] > result_limit ) {
                     std::cerr << "Result overflow " << host_nr_results[0] << std::endl;
                     host_nr_results[0] = result_limit;
@@ -3152,9 +3158,9 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
                         });
                     }
                 }
-                
+
                 if( lift ) {
-                    const uint32_t lift_result_limit = uint32_t(std::min(last_lift_result_capacity, size_t(max_results)));
+                    const uint32_t lift_result_limit = uint32_t(std::min(lift_result_capacity_slots[process_slot], size_t(max_results)));
                     if( host_nr_results[1] > 0.9 * lift_result_limit ) 
                         std::cerr << "Close to overflow " << host_nr_results[1] << std::endl;
 

@@ -144,6 +144,8 @@ class GPUStreamGeneral {
         packed_sieve_result* host_lift_results_slots[2];
         indextype* host_indices_slots[2];
         indextype* host_nr_results_slots[2];
+        size_t result_capacity_slots[2];
+        size_t lift_result_capacity_slots[2];
 
         void* dev_alloc;
         void* global_alloc;
