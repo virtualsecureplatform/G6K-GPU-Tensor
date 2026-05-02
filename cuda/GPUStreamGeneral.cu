@@ -1896,11 +1896,9 @@ GPUStreamGeneral::GPUStreamGeneral(const int _device, const size_t _n, const std
             d2h_enqueue_slot = 1;
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = nullptr;
-                host_lift_len_out_slots[i] = nullptr;
                 host_results_slots[i] = nullptr;
                 host_lift_results_slots[i] = nullptr;
                 host_indices_slots[i] = nullptr;
-                host_lift_indices_slots[i] = nullptr;
                 host_nr_results_slots[i] = nullptr;
             }
             CUDA_CHECK( cudaSetDevice( _device ) );
@@ -1956,10 +1954,6 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
                 reserve_host(lensize * sizeof(lentype)),
                 reserve_host(lensize * sizeof(lentype))
             };
-            const size_t host_lift_len_out_offsets[] = {
-                reserve_host(lensize * sizeof(lentype)),
-                reserve_host(lensize * sizeof(lentype))
-            };
             const size_t host_results_offsets[] = {
                 reserve_host(lensize * sizeof(packed_sieve_result)),
                 reserve_host(lensize * sizeof(packed_sieve_result))
@@ -1972,10 +1966,6 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             const size_t host_indices_offsets[] = {
                 reserve_host(max_results * sizeof(indextype)),
                 reserve_host(max_results * sizeof(indextype))
-            };
-            const size_t host_lift_indices_offsets[] = {
-                reserve_host(max_lift_results * sizeof(indextype)),
-                reserve_host(max_lift_results * sizeof(indextype))
             };
             const size_t host_nr_results_offsets[] = {
                 reserve_host(2 * sizeof(indextype)),
@@ -1991,21 +1981,17 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             host_ips = reinterpret_cast<iptype*>(host_base + host_ips_offset);
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_len_out_offsets[i]);
-                host_lift_len_out_slots[i] = reinterpret_cast<lentype*>(host_base + host_lift_len_out_offsets[i]);
                 host_results_slots[i] = reinterpret_cast<packed_sieve_result*>(host_base + host_results_offsets[i]);
                 host_lift_results_slots[i] = reinterpret_cast<packed_sieve_result*>(host_base + host_lift_results_offsets[i]);
                 host_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_indices_offsets[i]);
-                host_lift_indices_slots[i] = reinterpret_cast<indextype*>(host_base + host_lift_indices_offsets[i]);
                 host_nr_results_slots[i] = reinterpret_cast<indextype*>(host_base + host_nr_results_offsets[i]);
                 host_nr_results_slots[i][0] = host_nr_results_slots[i][1] = indextype(0);
             }
 
             host_len_out = host_len_out_slots[0];
-            host_lift_len_out = host_lift_len_out_slots[0];
             host_results = host_results_slots[0];
             host_lift_results = host_lift_results_slots[0];
             host_indices = host_indices_slots[0];
-            host_lift_indices = host_lift_indices_slots[0];
             host_nr_results = host_nr_results_slots[0];
 
             // Malloc device memory
@@ -2029,7 +2015,6 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             const size_t dev_X_extend_offset = reserve_dev(size_t(VECNUM*MAX_EXTEND) * sizeof(Xtype));
             const size_t dev_len_in_offset = reserve_dev(lensize * sizeof(lentype));
             const size_t dev_len_out_offset = reserve_dev(lensize * sizeof(lentype));
-            const size_t dev_lift_len_out_offset = reserve_dev(lensize * sizeof(lentype));
             const size_t dev_results_offset = reserve_dev(lensize * sizeof(packed_sieve_result));
             const size_t dev_lift_results_offset = reserve_dev(lensize * sizeof(packed_sieve_result));
             const size_t dev_len_half_offset = reserve_dev(lensize * sizeof(half));
@@ -2050,7 +2035,6 @@ void GPUStreamGeneral::malloc( global_dev_ptrs& dev_ptrs ) {
             dev_X_extend = reinterpret_cast<Xtype*>(dev_base + dev_X_extend_offset);
             dev_len_in = reinterpret_cast<lentype*>(dev_base + dev_len_in_offset);
             dev_len_out = reinterpret_cast<lentype*>(dev_base + dev_len_out_offset);
-            dev_lift_len_out = reinterpret_cast<lentype*>(dev_base + dev_lift_len_out_offset);
             dev_results = reinterpret_cast<packed_sieve_result*>(dev_base + dev_results_offset);
             dev_lift_results = reinterpret_cast<packed_sieve_result*>(dev_base + dev_lift_results_offset);
             dev_len_half = reinterpret_cast<half*>(dev_base + dev_len_half_offset);
@@ -2124,20 +2108,16 @@ void GPUStreamGeneral::free() {
             host_X_extend = nullptr;
             host_len_in = nullptr;
             host_len_out = nullptr;
-            host_lift_len_out = nullptr;
             host_results = nullptr;
             host_lift_results = nullptr;
             host_ips = nullptr;
             host_indices = nullptr;
-            host_lift_indices = nullptr;
             host_nr_results = nullptr;
             for( int i = 0; i < 2; i++ ) {
                 host_len_out_slots[i] = nullptr;
-                host_lift_len_out_slots[i] = nullptr;
                 host_results_slots[i] = nullptr;
                 host_lift_results_slots[i] = nullptr;
                 host_indices_slots[i] = nullptr;
-                host_lift_indices_slots[i] = nullptr;
                 host_nr_results_slots[i] = nullptr;
             }
 
@@ -2153,7 +2133,6 @@ void GPUStreamGeneral::free() {
             dev_X_extend = nullptr;
             dev_len_in = nullptr;
             dev_len_out = nullptr;
-            dev_lift_len_out = nullptr;
             dev_results = nullptr;
             dev_lift_results = nullptr;
             dev_len_half = nullptr;
@@ -2191,11 +2170,9 @@ void GPUStreamGeneral::reset_results() {
     d2h_enqueue_slot = 1;
     if( host_alloc != nullptr ) {
         host_len_out = host_len_out_slots[0];
-        host_lift_len_out = host_lift_len_out_slots[0];
         host_results = host_results_slots[0];
         host_lift_results = host_lift_results_slots[0];
         host_indices = host_indices_slots[0];
-        host_lift_indices = host_lift_indices_slots[0];
         host_nr_results = host_nr_results_slots[0];
     }
 }
@@ -2979,8 +2956,6 @@ void GPUStreamGeneral::P_receive_data( queues &queue, bool onlyprocess) {
             host_indices = host_indices_slots[process_slot];
             host_len_out = host_len_out_slots[process_slot];
             host_results = host_results_slots[process_slot];
-            host_lift_indices = host_lift_indices_slots[process_slot];
-            host_lift_len_out = host_lift_len_out_slots[process_slot];
             host_lift_results = host_lift_results_slots[process_slot];
             host_nr_results = host_nr_results_slots[process_slot];
 
