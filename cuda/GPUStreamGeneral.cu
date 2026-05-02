@@ -306,7 +306,7 @@ __global__ void kernel_X_to_Xfloat_normalize( const int16_t* X, const lentype* X
 // Fully coalesced memory loads and stores
 // Call with vecs/VECS_PER_BLOCK blocks with 32 threads each
 __global__ void kernel_X_to_Xfloat_negate( const int16_t* X, const iptype* Xip, float* Xfloat, const uint32_t VECDIM ) {
-    const uint32_t ROWS_PER_BLOCK = 32;
+    const uint32_t ROWS_PER_BLOCK = 128;
     const uint32_t SHORTS_PER_FLOAT4 = 8;
 
     const uint32_t Xstart = ROWS_PER_BLOCK * VECDIM * blockIdx.x;
@@ -321,7 +321,7 @@ __global__ void kernel_X_to_Xfloat_negate( const int16_t* X, const iptype* Xip, 
     __syncthreads();
 
     uint32_t k = SHORTS_PER_FLOAT4*threadIdx.x;
-    for( ; Xptr < Xptr_end; Xptr += WARP_SIZE, Xfloatptr += 2*WARP_SIZE, k+=SHORTS_PER_FLOAT4*WARP_SIZE ) {
+    for( ; Xptr < Xptr_end; Xptr += blockDim.x, Xfloatptr += 2*blockDim.x, k+=SHORTS_PER_FLOAT4*blockDim.x ) {
         int16_t regs[SHORTS_PER_FLOAT4];
         float regs_out[SHORTS_PER_FLOAT4];
         *reinterpret_cast<float4*>(regs) = *Xptr;
@@ -2342,8 +2342,8 @@ inline void GPUStreamGeneral::X_to_Xfloat( const size_t bucketsize ) {
 inline void GPUStreamGeneral::X_to_Xfloat_negate( const size_t bucketsize ) {
     // kernel threads/blocks
     
-    const size_t blocks = bucketsize / 32;
-    const size_t threads = 32;
+    const size_t blocks = bucketsize / 128;
+    const size_t threads = 128;
     kernel_X_to_Xfloat_negate<<<blocks, threads, 0, stream>>>( dev_X, dev_ips, dev_X_float, VECDIM );
 }
 
